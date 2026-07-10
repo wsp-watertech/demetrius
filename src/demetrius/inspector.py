@@ -90,14 +90,30 @@ class InspectionReport:
         coverage = get_coverage_polygon(self.tiles)
         covered_area = coverage.area if coverage else 0
         aoi_area = self.aoi.geometry.area
+        
+        # Calculate actual coverage of original (unbuffered) AOI
+        aoi_geom = self.aoi.geometry
+        if coverage:
+            aoi_covered = aoi_geom.intersection(coverage)
+            aoi_coverage_area = aoi_covered.area
+            aoi_coverage_pct = (aoi_coverage_area / aoi_area * 100) if aoi_area > 0 else 0
+        else:
+            aoi_coverage_area = 0
+            aoi_coverage_pct = 0
 
         if aoi_area > 0:
-            coverage_pct = (covered_area / aoi_area * 100) if covered_area > 0 else 0
+            # Raw tile area (with overlaps): sum of all individual tile areas
+            raw_tile_area = sum(tile.bounds_wgs84.to_polygon().area for tile in self.tiles)
+            
+            # Overlap factor: how many times are tiles redundantly covering the same area
+            overlap_factor = (raw_tile_area / covered_area) if covered_area > 0 else 0
+            
             lines.extend([
                 f"\nCoverage Estimate:",
                 f"  AOI area: {aoi_area:.2f} sq degrees",
-                f"  Tile coverage: {covered_area:.2f} sq degrees",
-                f"  Coverage: {coverage_pct:.1f}%",
+                f"  Actual AOI coverage: {aoi_coverage_area:.2f} sq degrees → {aoi_coverage_pct:.1f}% of AOI",
+                f"  Total tile extent (includes overhang): {covered_area:.2f} sq degrees",
+                f"  Dataset redundancy: {overlap_factor:.2f}x (minimal {(overlap_factor - 1) * 100:.0f}% overlap between datasets)",
             ])
 
         lines.append("\n" + "=" * 70)

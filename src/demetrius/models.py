@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from shapely.geometry import Polygon, box
 from shapely.geometry.base import BaseGeometry
 
@@ -42,22 +42,8 @@ class BoundingBox(BaseModel):
 class Tile(BaseModel):
     """Canonical tile representation from TNM."""
 
-    id: str = Field(..., description="Unique tile identifier")
-    dataset_id: str = Field(..., description="Dataset identifier extracted from TNM title")
-    tile_id: str = Field(..., description="Tile coordinate/ID (e.g., 'x38y448')")
-    publication_date: datetime = Field(..., description="Publication date for priority sorting")
-    last_updated: datetime = Field(..., description="Last update timestamp (priority fallback)")
-    download_url: str = Field(..., description="Direct download URL from TNM")
-    bounds_wgs84: BoundingBox = Field(..., description="Bounding box in EPSG:4326")
-    priority: int = Field(..., description="Dataset priority (0=newest, 1, 2...)")
-    local_path: Optional[str] = Field(
-        default=None, description="Local file path after download"
-    )
-
-    class Config:
-        """Pydantic config."""
-
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "id": "USGS_1m_PA_3_County_South_Central_2018_D18_x38y448",
                 "dataset_id": "PA_3_County_South_Central_2018_D18",
@@ -74,17 +60,29 @@ class Tile(BaseModel):
                 "priority": 0,
             }
         }
+    )
+
+    id: str = Field(..., description="Unique tile identifier")
+    dataset_id: str = Field(..., description="Dataset identifier extracted from TNM title")
+    tile_id: str = Field(..., description="Tile coordinate/ID (e.g., 'x38y448')")
+    publication_date: datetime = Field(..., description="Publication date for priority sorting")
+    last_updated: datetime = Field(..., description="Last update timestamp (priority fallback)")
+    download_url: str = Field(..., description="Direct download URL from TNM")
+    bounds_wgs84: BoundingBox = Field(..., description="Bounding box in EPSG:4326")
+    priority: int = Field(..., description="Dataset priority (0=newest, 1, 2...)")
+    local_path: Optional[str] = Field(
+        default=None, description="Local file path after download"
+    )
 
 
 class AOI(BaseModel):
     """Area of Interest geometry and metadata."""
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     geometry: BaseGeometry = Field(..., description="Shapely geometry object")
     crs: str = Field(default="EPSG:4326", description="Coordinate reference system")
     buffer_distance: int = Field(default=1000, description="Buffer distance in meters")
-
-    class Config:
-        arbitrary_types_allowed = True
 
     def bounds(self) -> BoundingBox:
         """Get bounding box of AOI."""

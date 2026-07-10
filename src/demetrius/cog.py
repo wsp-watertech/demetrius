@@ -48,7 +48,6 @@ class COGGenerator:
                 f"COMPRESS={compression.upper()}",
                 "-co",
                 f"BLOCKSIZE={blocksize}",
-                "-overwrite",
                 str(input_raster),
                 str(output_cog),
             ]

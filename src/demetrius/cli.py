@@ -52,8 +52,14 @@ def cli():
     help="Buffer distance in meters for tile discovery",
 )
 @click.option(
+    "--project-bounds",
+    required=True,
+    type=click.Path(exists=True),
+    help="Path to project boundaries (GeoParquet, GeoJSON, shapefile, etc.)",
+)
+@click.option(
     "--require-full-coverage",
-    default=True,
+    default=False,
     type=bool,
     help="Require full coverage of original AOI",
 )
@@ -63,7 +69,7 @@ def cli():
     type=click.Choice(["full", "download-only", "process-only"]),
     help="Processing mode",
 )
-def process(aoi, output, output_crs, buffer_distance, require_full_coverage, mode):
+def process(aoi, output, output_crs, buffer_distance, project_bounds, require_full_coverage, mode):
     """Process DEM workflow (default: full pipeline)."""
     try:
         from .cog import COGGenerator
@@ -73,8 +79,14 @@ def process(aoi, output, output_crs, buffer_distance, require_full_coverage, mod
         from .merger import DatasetMerger
         from .mosaicker import VRTMosaicker
         from .reprojector import Reprojector
+        from .project_boundaries import ProjectBoundaries
         import tempfile
         from collections import defaultdict
+
+        # Load project boundaries
+        click.echo(f"Loading project boundaries from {project_bounds}")
+        proj_bounds = ProjectBoundaries.from_file(project_bounds)
+        click.echo(f"✓ Loaded project boundaries")
 
         # Load AOI
         click.echo(f"Loading AOI from {aoi}")
@@ -88,17 +100,17 @@ def process(aoi, output, output_crs, buffer_distance, require_full_coverage, mod
             buffered_bbox = aoi_obj.buffered_bounds()
             all_tiles = source.search(buffered_bbox)
 
-            # Filter by AOI
+            # Filter by AOI with project boundaries
             click.echo("Filtering tiles by AOI intersection...")
-            filtered_tiles = filter_tiles_by_aoi(all_tiles, aoi_obj)
+            filtered_tiles = filter_tiles_by_aoi(all_tiles, aoi_obj, proj_bounds)
 
             # Prioritize datasets
             click.echo("Prioritizing datasets...")
             prioritized_tiles = prioritize_datasets(filtered_tiles)
 
-            # Validate coverage
+            # Validate coverage with project boundaries
             click.echo("Validating coverage...")
-            validate_coverage(prioritized_tiles, aoi_obj, require_full_coverage)
+            validate_coverage(prioritized_tiles, aoi_obj, proj_bounds, require_full_coverage)
 
             click.echo(f"✓ Found {len(prioritized_tiles)} tiles from {len(set(t.dataset_id for t in prioritized_tiles))} datasets")
 
@@ -163,7 +175,11 @@ def process(aoi, output, output_crs, buffer_distance, require_full_coverage, mod
                 merged_raster = list(dataset_vrts.values())[0]
             else:
                 merger = DatasetMerger(Path(tmpdir))
-                merged_raster = merger.merge_datasets(downloaded_tiles, Path(tmpdir) / "merged.tif")
+                merged_raster = merger.merge_datasets(
+                    downloaded_tiles,
+                    Path(tmpdir) / "merged.tif",
+                    dataset_vrts=dataset_vrts,
+                )
 
             # Step 4: Reproject (if needed) and clip
             click.echo(f"\n[4/5] Reprojecting and clipping...")

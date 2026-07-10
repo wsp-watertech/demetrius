@@ -4,7 +4,7 @@ import logging
 import subprocess
 from collections import defaultdict
 from pathlib import Path
-from typing import Sequence
+from typing import Optional, Sequence
 
 from .models import Tile
 
@@ -26,6 +26,7 @@ class DatasetMerger:
         self,
         tiles: Sequence[Tile],
         output_path: Path,
+        dataset_vrts: Optional[dict[str, Path]] = None,
     ) -> Path:
         """Merge tiles from multiple datasets with priority.
 
@@ -35,6 +36,7 @@ class DatasetMerger:
         Args:
             tiles: All selected tiles (should be pre-sorted by priority)
             output_path: Output raster path
+            dataset_vrts: Optional pre-created VRTs for each dataset
 
         Returns:
             Path to merged raster
@@ -65,16 +67,22 @@ class DatasetMerger:
             dataset_tiles = dataset_groups[dataset_id]
             logger.info(f"Processing dataset {dataset_id} (priority {priority}) with {len(dataset_tiles)} tiles")
 
+            # Use provided VRT if available, otherwise prepare from tiles
+            if dataset_vrts and dataset_id in dataset_vrts:
+                dataset_raster = dataset_vrts[dataset_id]
+                logger.debug(f"Using pre-created VRT for {dataset_id}")
+            else:
+                dataset_raster = self._prepare_dataset(dataset_id, dataset_tiles)
+
             if i == 0:
                 # First dataset - just use it directly
-                # In production, would create VRT and move on
-                current_raster = self._prepare_dataset(dataset_id, dataset_tiles)
+                current_raster = dataset_raster
             else:
                 # Merge with previous using gdalwarp
                 merged_path = self.working_dir / f"merged_{priority}.tif"
                 current_raster = self._merge_with_gdalwarp(
                     current_raster,
-                    self._prepare_dataset(dataset_id, dataset_tiles),
+                    dataset_raster,
                     merged_path,
                 )
 
@@ -126,6 +134,8 @@ class DatasetMerger:
         logger.debug(f"Merging {overlay_raster} onto {source_raster}")
 
         try:
+            # gdalwarp syntax: gdalwarp [options] src_file... dst_file
+            # When multiple sources are provided, they are all mosaicked together
             cmd = [
                 "gdalwarp",
                 "-overwrite",

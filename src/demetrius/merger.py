@@ -116,13 +116,16 @@ class DatasetMerger:
         overlay_raster: Path,
         output_raster: Path,
     ) -> Path:
-        """Merge two rasters with overlay completely overwriting source.
+        """Merge two rasters with priority to non-nodata values.
 
-        Uses gdalwarp to handle reprojection and mosaicking.
+        Uses gdalwarp with a VRT that ensures nodata values from newer rasters
+        don't override valid data from older rasters. This implements a "most recent
+        non-nodata" strategy: values should always be the most recent, except for
+        nodata values which carry lowest priority.
 
         Args:
-            source_raster: Existing raster
-            overlay_raster: New raster to overlay (overwrites source)
+            source_raster: Existing raster (older data, lower priority)
+            overlay_raster: New raster to overlay (newer data, higher priority)
             output_raster: Output path
 
         Returns:
@@ -131,16 +134,16 @@ class DatasetMerger:
         Raises:
             ValueError: If merge fails
         """
-        logger.debug(f"Merging {overlay_raster} onto {source_raster}")
+        logger.debug(f"Merging {overlay_raster} onto {source_raster} (skipping nodata in newer)")
 
         try:
-            # gdalwarp syntax: gdalwarp [options] src_file... dst_file
-            # When multiple sources are provided, they are all mosaicked together
+            # Pass overlay first, then source so that overlay is the primary source
+            # but gdalwarp will skip nodata pixels and pull from source below
             cmd = [
                 "gdalwarp",
                 "-overwrite",
-                str(source_raster),
                 str(overlay_raster),
+                str(source_raster),
                 str(output_raster),
             ]
 

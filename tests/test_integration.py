@@ -171,9 +171,11 @@ class TestWorkflow:
         # All should have priority assigned (not -1)
         assert all(t.priority >= 0 for t in result)
 
-        # Newest should have priority 0
+        # Oldest should have priority 0 (base layer), newest should have highest priority (overlay on top)
+        oldest = [t for t in result if t.dataset_id == "PA_2019"]
         newest = [t for t in result if t.dataset_id == "PA_2021"]
-        assert all(t.priority == 0 for t in newest)
+        assert all(t.priority == 0 for t in oldest)
+        assert all(t.priority == 2 for t in newest)
 
 
 class TestGDALIntegration:

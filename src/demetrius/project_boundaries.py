@@ -32,10 +32,27 @@ class ProjectBoundaries:
         if "geometry" not in gdf.columns:
             raise ValueError("GeoDataFrame must have 'geometry' column")
         
+        # Clean invalid geometries BEFORE CRS conversion (buffer(0) fixes self-intersecting polygons)
+        invalid_count = (~gdf.geometry.is_valid).sum()
+        if invalid_count > 0:
+            logger.info(f"Cleaning {invalid_count} invalid geometries")
+            gdf["geometry"] = gdf.geometry.apply(lambda geom: geom.buffer(0) if not geom.is_valid else geom)
+            # Re-check after buffer - if still invalid, try convex hull
+            still_invalid = ~gdf.geometry.is_valid
+            if still_invalid.any():
+                logger.info(f"Applying convex_hull to {still_invalid.sum()} geometries still invalid after buffer")
+                gdf.loc[still_invalid, "geometry"] = gdf.loc[still_invalid, "geometry"].apply(lambda geom: geom.convex_hull)
+        
         # Ensure WGS84
         if gdf.crs and gdf.crs.to_epsg() != 4326:
             logger.info(f"Converting project boundaries from {gdf.crs} to EPSG:4326")
-            gdf = gdf.to_crs("EPSG:4326")
+            try:
+                gdf = gdf.to_crs("EPSG:4326")
+            except Exception as e:
+                logger.warning(f"CRS conversion failed, attempting with cleaned geometries: {e}")
+                # Last resort - remove any remaining invalid geometries before conversion
+                gdf = gdf[gdf.geometry.is_valid].copy()
+                gdf = gdf.to_crs("EPSG:4326")
         
         self.gdf = gdf.reset_index(drop=True)
         self.spatial_index = self.gdf.sindex

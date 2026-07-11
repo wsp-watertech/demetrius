@@ -11,20 +11,21 @@ logger = logging.getLogger(__name__)
 
 
 def prioritize_datasets(tiles: Sequence[Tile]) -> list[Tile]:
-    """Assign priority values and resolve duplicate tiles.
+    """Assign priority values to tiles and datasets.
 
     Datasets are prioritized by:
-    1. publication_date (descending - newest first)
+    1. publication_date (ascending - oldest first for base layer)
     2. last_updated (fallback)
 
-    When the same tile appears in multiple datasets, only the
-    highest-priority (newest) version is kept.
+    Matching tiles from different datasets are NOT deduplicated here.
+    Instead, all tiles are kept and allowed to overlap. The mosaic step
+    will resolve overlaps by selecting the most recent non-nodata value.
 
     Args:
         tiles: Raw tiles from TNM
 
     Returns:
-        Tiles with priority assigned, duplicates removed
+        All tiles with priority assigned (no deduplication)
     """
     logger.info(f"Prioritizing datasets among {len(tiles)} tiles")
 
@@ -40,24 +41,16 @@ def prioritize_datasets(tiles: Sequence[Tile]) -> list[Tile]:
 
     logger.info(f"Dataset priority order: {sorted_datasets}")
 
-    # Assign priority values and track seen tiles
+    # Assign priority values to all tiles (no deduplication)
     result = []
-    seen_tile_ids: set[str] = set()
 
     for priority, dataset_id in enumerate(sorted_datasets):
         for tile in datasets[dataset_id]:
-            if tile.tile_id not in seen_tile_ids:
-                tile.priority = priority
-                result.append(tile)
-                seen_tile_ids.add(tile.tile_id)
-                logger.debug(f"Assigned priority {priority} to tile {tile.tile_id} (dataset {dataset_id})")
-            else:
-                logger.debug(
-                    f"Skipped duplicate tile {tile.tile_id} from dataset {dataset_id} "
-                    f"(already seen in higher-priority dataset)"
-                )
+            tile.priority = priority
+            result.append(tile)
+            logger.debug(f"Assigned priority {priority} to tile {tile.tile_id} (dataset {dataset_id})")
 
-    logger.info(f"After deduplication: {len(result)} tiles retained")
+    logger.info(f"Total tiles: {len(result)} (including overlapping tiles from different datasets)")
     return result
 
 
@@ -89,11 +82,11 @@ def _sort_datasets_by_priority(
 
         dataset_metadata[dataset_id] = (latest_pub, latest_update)
 
-    # Sort by publication_date desc, then last_updated desc
+    # Sort by publication_date asc, then last_updated asc (oldest first)
+    # This ensures oldest data becomes priority=0 (base) and newest gets highest priority (overlay on top)
     sorted_ids = sorted(
         dataset_metadata.keys(),
         key=lambda d: (dataset_metadata[d][0], dataset_metadata[d][1]),
-        reverse=True,
     )
 
     return sorted_ids

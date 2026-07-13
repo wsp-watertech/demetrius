@@ -33,7 +33,7 @@ def filter_tiles_by_aoi(
     logger.info(f"Filtering {len(tiles)} tiles by AOI intersection")
 
     # Get buffered AOI as polygon
-    buffered_aoi = aoi.geometry.buffer(aoi.buffer_distance)
+    buffered_aoi = aoi.buffered_geometry()
 
     filtered = []
     for tile in tiles:

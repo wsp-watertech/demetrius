@@ -17,18 +17,18 @@ class Manifest:
         self,
         aoi: AOI,
         tiles: list[Tile],
-        buffer_distance: int = 1000,
+        buffer: int = 0,
     ):
         """Create manifest from AOI and tiles.
 
         Args:
             aoi: Area of Interest
             tiles: Selected and prioritized tiles
-            buffer_distance: Buffer distance used for discovery
+            buffer: Buffer distance used for discovery
         """
         self.aoi = aoi
         self.tiles = tiles
-        self.buffer_distance = buffer_distance
+        self.buffer = buffer
 
     def to_dict(self) -> dict[str, Any]:
         """Convert manifest to dictionary for serialization.
@@ -46,7 +46,7 @@ class Manifest:
                 },
                 "crs": self.aoi.crs,
             },
-            "buffer_distance": self.buffer_distance,
+            "buffer": self.buffer,
             "tile_count": len(self.tiles),
             "tiles": [
                 {
@@ -110,7 +110,7 @@ class Manifest:
         aoi = AOI(
             geometry=geometry,
             crs=aoi_data.get("crs", "EPSG:4326"),
-            buffer_distance=data.get("buffer_distance", 1000),
+            buffer=data.get("buffer", data.get("buffer_distance", 0)),
         )
 
         # Reconstruct tiles
@@ -135,4 +135,4 @@ class Manifest:
             )
             tiles.append(tile)
 
-        return cls(aoi=aoi, tiles=tiles, buffer_distance=data.get("buffer_distance", 1000))
+        return cls(aoi=aoi, tiles=tiles, buffer=data.get("buffer", data.get("buffer_distance", 0)))

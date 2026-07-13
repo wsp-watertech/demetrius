@@ -47,12 +47,18 @@ class ProjectBoundaries:
         if gdf.crs and gdf.crs.to_epsg() != 4326:
             logger.info(f"Converting project boundaries from {gdf.crs} to EPSG:4326")
             try:
-                gdf = gdf.to_crs("EPSG:4326")
+                gdf_converted = gdf.to_crs("EPSG:4326")
+                # Validate that conversion didn't produce invalid geometries (e.g., infinity coordinates)
+                invalid_after_conversion = (~gdf_converted.geometry.is_valid).sum()
+                bad_bounds = gdf_converted.geometry.apply(
+                    lambda g: any(b == float('inf') or b == float('-inf') for b in g.bounds) if g.bounds else False
+                ).sum()
+                if invalid_after_conversion > 0 or bad_bounds > 0:
+                    logger.warning(f"CRS conversion to EPSG:4326 produced {invalid_after_conversion} invalid geometries and {bad_bounds} with inf bounds. Keeping geometries in original CRS ({gdf.crs}).")
+                else:
+                    gdf = gdf_converted
             except Exception as e:
-                logger.warning(f"CRS conversion failed, attempting with cleaned geometries: {e}")
-                # Last resort - remove any remaining invalid geometries before conversion
-                gdf = gdf[gdf.geometry.is_valid].copy()
-                gdf = gdf.to_crs("EPSG:4326")
+                logger.warning(f"CRS conversion failed: {e}. Keeping geometries in original CRS ({gdf.crs}).")
         
         self.gdf = gdf.reset_index(drop=True)
         self.spatial_index = self.gdf.sindex

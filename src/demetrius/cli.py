@@ -12,14 +12,17 @@ from .downloader import TileDownloader
 from .filtering import filter_tiles_by_aoi
 from .inspector import InspectionReport
 from .manifest import Manifest
-from .models import AOI
+from .models import AOI, BoundingBox
 from .priority import prioritize_datasets
 from .tnm import TNMTileSource
+from .crs import get_target_utm_for_tiles
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
+
+logger = logging.getLogger(__name__)
 
 
 @click.group()
@@ -46,8 +49,8 @@ def cli():
     help="Target CRS (e.g., EPSG:32618)",
 )
 @click.option(
-    "--buffer-distance",
-    default=1000,
+    "--buffer",
+    default=0,
     type=int,
     help="Buffer distance in meters for tile discovery",
 )
@@ -69,7 +72,7 @@ def cli():
     type=click.Choice(["full", "download-only", "process-only"]),
     help="Processing mode",
 )
-def process(aoi, output, output_crs, buffer_distance, project_bounds, require_full_coverage, mode):
+def process(aoi, output, output_crs, buffer, project_bounds, require_full_coverage, mode):
     """Process DEM workflow (default: full pipeline)."""
     try:
         from .cog import COGGenerator
@@ -90,14 +93,57 @@ def process(aoi, output, output_crs, buffer_distance, project_bounds, require_fu
 
         # Load AOI
         click.echo(f"Loading AOI from {aoi}")
-        aoi_obj = AOI.from_file(aoi, buffer_distance=buffer_distance)
+        aoi_obj = AOI.from_file(aoi, buffer=buffer)
         click.echo(f"✓ Loaded AOI")
+
+        # Determine target CRS early (needed for buffering)
+        if not output_crs:
+            click.echo("\n[0/5] Auto-detecting target CRS...")
+            source = TNMTileSource()
+            # Search with unbuffered bounds to find tiles for CRS detection
+            initial_bbox = aoi_obj.bounds()
+            initial_tiles = source.search(initial_bbox)
+            if initial_tiles:
+                output_crs = get_target_utm_for_tiles(initial_tiles)
+                click.echo(f"Auto-selected target CRS: {output_crs}")
+            else:
+                raise ValueError("No tiles found for CRS auto-detection")
+        else:
+            click.echo(f"Using target CRS: {output_crs}")
 
         # Step 1: Query TNM
         if mode != "process-only":
             click.echo("\n[1/5] Querying TNM for tiles...")
             source = TNMTileSource()
-            buffered_bbox = aoi_obj.buffered_bounds()
+            
+            # Get buffered bounds in output CRS
+            if buffer > 0:
+                try:
+                    buffered_geom_in_output_crs = aoi_obj.buffered_geometry_in_crs(output_crs)
+                    # Check if buffering was successful (geometry should be valid and in expected CRS)
+                    bounds = buffered_geom_in_output_crs.bounds
+                    if any(b == float('inf') or b == float('-inf') for b in bounds):
+                        # Buffering fell back to Web Mercator, geometry is in WGS84
+                        logger.info("Buffering fell back to Web Mercator, using Web Mercator-buffered bounds")
+                        buffered_bbox = aoi_obj.buffered_bounds()
+                    else:
+                        # Buffering succeeded in output CRS, reproject back to WGS84 for TNM search
+                        import geopandas as gpd
+                        gdf = gpd.GeoDataFrame([{'geometry': buffered_geom_in_output_crs}], crs=output_crs)
+                        gdf_wgs84 = gdf.to_crs("EPSG:4326")
+                        buffered_geom_wgs84 = gdf_wgs84.iloc[0].geometry
+                        buffered_bbox = BoundingBox(
+                            min_x=buffered_geom_wgs84.bounds[0],
+                            min_y=buffered_geom_wgs84.bounds[1],
+                            max_x=buffered_geom_wgs84.bounds[2],
+                            max_y=buffered_geom_wgs84.bounds[3],
+                        )
+                except Exception as e:
+                    logger.warning(f"Error computing buffered geometry in output CRS: {e}. Using Web Mercator-buffered bounds.")
+                    buffered_bbox = aoi_obj.buffered_bounds()
+            else:
+                buffered_bbox = aoi_obj.bounds()
+            
             all_tiles = source.search(buffered_bbox)
 
             # Filter by AOI with project boundaries
@@ -115,7 +161,7 @@ def process(aoi, output, output_crs, buffer_distance, project_bounds, require_fu
             click.echo(f"✓ Found {len(prioritized_tiles)} tiles from {len(set(t.dataset_id for t in prioritized_tiles))} datasets")
 
             # Create manifest
-            manifest = Manifest(aoi_obj, prioritized_tiles, buffer_distance)
+            manifest = Manifest(aoi_obj, prioritized_tiles, buffer)
             manifest_path = Path(output).parent / "manifest.json"
             manifest.save(manifest_path)
             click.echo(f"✓ Saved manifest to {manifest_path}")
@@ -184,22 +230,31 @@ def process(aoi, output, output_crs, buffer_distance, project_bounds, require_fu
             # Step 4: Reproject (if needed) and clip
             click.echo(f"\n[4/5] Reprojecting and clipping...")
 
-            # Determine target CRS
-            if not output_crs:
-                output_crs = get_target_utm_for_tiles(downloaded_tiles)
-                click.echo(f"Auto-selected target CRS: {output_crs}")
-            else:
-                click.echo(f"Using target CRS: {output_crs}")
-
             # Reproject
             reprojector = Reprojector()
             reprojected = Path(tmpdir) / "reprojected.tif"
             reprojector.reproject(merged_raster, reprojected, output_crs)
 
             # Clip
+            click.echo("Clipping to AOI with buffer...")
+            
+            # Get buffered geometry in output CRS for accurate meter-based buffering
+            clipping_geometry = aoi_obj.buffered_geometry_in_crs(output_crs)
+            
+            # Reproject back to WGS84 for gdalwarp
+            import geopandas as gpd
+            gdf_clip = gpd.GeoDataFrame([{"geometry": clipping_geometry}], crs=output_crs)
+            gdf_wgs84 = gdf_clip.to_crs("EPSG:4326")
+            clipping_geometry_wgs84 = gdf_wgs84.iloc[0].geometry
+            
             clipper = Clipper()
             clipped = Path(tmpdir) / "clipped.tif"
-            clipper.clip(reprojected, clipped, aoi_obj.geometry)
+            clipper.clip(
+                reprojected,
+                clipped,
+                clipping_geometry_wgs84,
+                geometry_crs="EPSG:4326",
+            )
             click.echo(f"✓ Reprojected and clipped")
 
             # Step 5: Generate COG

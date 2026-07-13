@@ -158,7 +158,7 @@ class TestFiltering:
         ]
 
         # Create AOI that intersects only tile_1
-        aoi = AOI(geometry=box(-74.45, 40.05, -74.41, 40.09), buffer_distance=0)
+        aoi = AOI(geometry=box(-74.45, 40.05, -74.41, 40.09), buffer=0)
 
         filtered = filter_tiles_by_aoi(tiles, aoi)
         assert len(filtered) == 1
@@ -195,7 +195,7 @@ class TestCoverageValidation:
     def test_full_coverage(self):
         """Test validation with full coverage."""
         # Create AOI
-        aoi = AOI(geometry=box(-74.5, 40.0, -74.3, 40.2), buffer_distance=0)
+        aoi = AOI(geometry=box(-74.5, 40.0, -74.3, 40.2), buffer=0)
 
         # Create tiles that fully cover AOI
         tiles = [

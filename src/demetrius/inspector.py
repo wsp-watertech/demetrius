@@ -39,7 +39,7 @@ class InspectionReport:
             f"\nArea of Interest:",
             f"  Bounds: ({bounds.min_x:.4f}, {bounds.min_y:.4f}) → "
             f"({bounds.max_x:.4f}, {bounds.max_y:.4f})",
-            f"  Buffer distance: {self.aoi.buffer_distance} m",
+            f"  Buffer: {self.aoi.buffer} m",
         ])
 
         # Tile summary

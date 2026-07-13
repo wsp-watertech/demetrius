@@ -20,15 +20,18 @@ class Clipper:
         input_raster: Path,
         output_raster: Path,
         geometry: BaseGeometry,
+        geometry_crs: str = "EPSG:4326",
     ) -> Path:
         """Clip raster to AOI geometry.
 
         Uses gdalwarp with -cutline option for precise clipping.
+        Geometry should be in WGS84 for gdalwarp to work correctly.
 
         Args:
             input_raster: Input raster path
             output_raster: Output clipped raster path
-            geometry: Shapely geometry to clip to
+            geometry: Shapely geometry to clip to (should be in WGS84)
+            geometry_crs: CRS of the input geometry (should be "EPSG:4326")
 
         Returns:
             Path to clipped raster
@@ -37,6 +40,13 @@ class Clipper:
             RuntimeError: If clipping fails or gdalwarp is not available
         """
         logger.info(f"Clipping {input_raster} to AOI geometry")
+
+        # If geometry is not in WGS84, reproject it
+        if geometry_crs != "EPSG:4326":
+            import geopandas as gpd
+            gdf = gpd.GeoDataFrame([{"geometry": geometry}], crs=geometry_crs)
+            gdf_wgs84 = gdf.to_crs("EPSG:4326")
+            geometry = gdf_wgs84.iloc[0].geometry
 
         # Convert geometry to GeoJSON for gdalwarp
         geojson = self._geometry_to_geojson(geometry)

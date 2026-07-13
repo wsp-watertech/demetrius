@@ -75,7 +75,7 @@ class TestManifest:
     def test_manifest_save_and_load(self, tmp_path):
         """Test saving and loading manifest."""
         # Create sample data
-        aoi = AOI(geometry=box(-74.5, 40.0, -74.4, 40.1), buffer_distance=1000)
+        aoi = AOI(geometry=box(-74.5, 40.0, -74.4, 40.1), buffer=1000)
         tiles = [
             Tile(
                 id="test_tile_1",
@@ -91,7 +91,7 @@ class TestManifest:
         ]
 
         # Create and save manifest
-        manifest = Manifest(aoi=aoi, tiles=tiles, buffer_distance=1000)
+        manifest = Manifest(aoi=aoi, tiles=tiles, buffer=1000)
         manifest_path = tmp_path / "manifest.json"
         manifest.save(manifest_path)
 
@@ -102,11 +102,11 @@ class TestManifest:
         loaded = Manifest.load(manifest_path)
         assert len(loaded.tiles) == 1
         assert loaded.tiles[0].dataset_id == "PA_County_2018"
-        assert loaded.buffer_distance == 1000
+        assert loaded.buffer == 1000
 
     def test_manifest_content(self, tmp_path):
         """Test manifest JSON structure."""
-        aoi = AOI(geometry=box(-74.5, 40.0, -74.4, 40.1), buffer_distance=1000)
+        aoi = AOI(geometry=box(-74.5, 40.0, -74.4, 40.1), buffer=1000)
         tiles = [
             Tile(
                 id="test_tile",
@@ -130,7 +130,7 @@ class TestManifest:
 
         assert "aoi" in data
         assert "tiles" in data
-        assert "buffer_distance" in data
+        assert "buffer" in data
         assert data["tile_count"] == 1
         assert data["tiles"][0]["dataset_id"] == "PA_County"
 

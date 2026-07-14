@@ -1,4 +1,4 @@
-"""Elevation value conversion based on CRS vertical units."""
+"""Elevation value conversion based on CRS linear units."""
 
 import logging
 import subprocess
@@ -11,9 +11,9 @@ logger = logging.getLogger(__name__)
 
 
 class ElevationConverter:
-    """Convert elevation values to match CRS vertical units using GDAL."""
+    """Convert elevation values to match CRS linear units using GDAL."""
 
-    # Conversion factors to meters
+    # Conversion factors to meters (linear/horizontal CRS units)
     UNIT_TO_METERS = {
         "metre": 1.0,
         "meter": 1.0,
@@ -22,11 +22,17 @@ class ElevationConverter:
         "foot_us": 0.3048006096,
         "us survey foot": 0.3048006096,
         "usfeet": 0.3048006096,
+        "foot_international": 0.3048,
+        "international foot": 0.3048,
     }
 
     @staticmethod
-    def get_vertical_units(crs: str) -> Optional[str]:
-        """Get vertical units of a CRS.
+    def get_linear_units(crs: str) -> Optional[str]:
+        """Get linear units of a projected CRS.
+
+        For projected CRS, elevation is measured in the same units as the
+        horizontal coordinates (e.g., meters for UTM, feet for State Plane).
+        This method returns those horizontal CRS units.
 
         Args:
             crs: CRS specification (e.g., "EPSG:32111")
@@ -37,22 +43,7 @@ class ElevationConverter:
         try:
             crs_obj = pyproj.CRS(crs)
             
-            # Try to get vertical CRS
-            if hasattr(crs_obj, 'to_dict'):
-                crs_dict = crs_obj.to_dict()
-                
-                # Check for vertical CRS
-                if isinstance(crs_dict, dict):
-                    if "vertical_crs" in crs_dict:
-                        vert_dict = crs_dict["vertical_crs"]
-                        if "coordinate_system" in vert_dict:
-                            cs = vert_dict["coordinate_system"]
-                            if "axis" in cs and len(cs["axis"]) > 0:
-                                unit = cs["axis"][0].get("unit")
-                                if isinstance(unit, dict) and "abbreviation" in unit:
-                                    return unit["abbreviation"]
-            
-            # Try axis attribute
+            # Get axis info for projected CRS linear units
             if hasattr(crs_obj, 'axis_info') and crs_obj.axis_info:
                 for axis in crs_obj.axis_info:
                     if axis.unit_name:
@@ -60,12 +51,12 @@ class ElevationConverter:
             
             return None
         except Exception as e:
-            logger.warning(f"Could not determine vertical units for {crs}: {e}")
+            logger.warning(f"Could not determine linear units for {crs}: {e}")
             return None
 
     @staticmethod
     def get_conversion_factor(crs: str) -> float:
-        """Get conversion factor from meters to CRS vertical units.
+        """Get conversion factor from meters to CRS linear units.
 
         Args:
             crs: Target CRS specification
@@ -74,7 +65,7 @@ class ElevationConverter:
             Conversion factor (multiply meters by this to get target units).
             Returns 1.0 if target is meters or units cannot be determined.
         """
-        units = ElevationConverter.get_vertical_units(crs)
+        units = ElevationConverter.get_linear_units(crs)
         if not units:
             return 1.0
         
@@ -91,7 +82,7 @@ class ElevationConverter:
                 logger.info(f"Matched unit '{units}' to '{key}'")
                 return 1.0 / factor if factor > 0 else 1.0
         
-        logger.warning(f"Unknown vertical unit: {units}. No conversion applied.")
+        logger.warning(f"Unknown linear unit: {units}. No conversion applied.")
         return 1.0
 
     def convert(
@@ -100,7 +91,12 @@ class ElevationConverter:
         output_raster: Path,
         target_crs: str,
     ) -> Path:
-        """Convert elevation values in raster to target CRS vertical units.
+        """Convert elevation values in raster to target CRS linear units.
+
+        For projected CRS, elevation values should be in the same units as the
+        horizontal coordinates (e.g., meters for UTM, feet for State Plane).
+        This method scales input elevation from meters to the target CRS's
+        linear units.
 
         Uses gdal_translate with a linear -scale transform (0..1 -> 0..factor)
         to multiply all pixel values by the conversion factor. NoData pixels
@@ -125,7 +121,7 @@ class ElevationConverter:
             RuntimeError: If conversion fails or gdal_translate is unavailable
         """
         factor = self.get_conversion_factor(target_crs)
-        units = self.get_vertical_units(target_crs)
+        units = self.get_linear_units(target_crs)
         
         logger.info(f"Elevation conversion: multiply by {factor:.6f}")
         if units:

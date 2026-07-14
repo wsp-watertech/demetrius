@@ -50,6 +50,12 @@ def cli():
     help="Target CRS (e.g., EPSG:32618)",
 )
 @click.option(
+    "--ffrd",
+    is_flag=True,
+    default=False,
+    help="Use FFRD custom projection (overrides --output-crs, enforces snapping, defaults to cellsize=4)",
+)
+@click.option(
     "--buffer",
     default=0,
     type=int,
@@ -85,7 +91,7 @@ def cli():
     type=click.Choice(["full", "download-only", "process-only"]),
     help="Processing mode",
 )
-def process(aoi, output, output_crs, buffer, cellsize, no_snap, project_bounds, require_full_coverage, mode):
+def process(aoi, output, output_crs, ffrd, buffer, cellsize, no_snap, project_bounds, require_full_coverage, mode):
     """Process DEM workflow (default: full pipeline)."""
     try:
         from .cog import COGGenerator
@@ -97,8 +103,35 @@ def process(aoi, output, output_crs, buffer, cellsize, no_snap, project_bounds, 
         from .reprojector import Reprojector
         from .project_boundaries import ProjectBoundaries
         from .snapper import Snapper
+        from .projections import get_projection_file
         import tempfile
         from collections import defaultdict
+
+        # Handle --ffrd flag
+        if ffrd:
+            if output_crs:
+                click.echo("⚠ --ffrd overrides --output-crs")
+            ffrd_path = get_projection_file('ffrd.prj')
+            if not ffrd_path:
+                raise RuntimeError("FFRD projection file not found")
+            
+            # Load WKT from FFRD projection file
+            ffrd_wkt = ffrd_path.read_text().strip()
+            if not ffrd_wkt:
+                raise ValueError("FFRD projection file is empty")
+            
+            output_crs = ffrd_wkt
+            click.echo(f"Using FFRD custom projection")
+            
+            # Force snapping when using --ffrd
+            if no_snap:
+                click.echo("⚠ --ffrd requires snapping (--no-snap ignored)")
+            no_snap = False
+            
+            # Use cellsize=4 unless explicitly specified
+            if cellsize is None:
+                cellsize = 4.0
+                click.echo("Using FFRD default cellsize: 4")
 
         # Load project boundaries
         click.echo(f"Loading project boundaries from {project_bounds}")

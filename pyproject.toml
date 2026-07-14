@@ -40,3 +40,11 @@ strict = true
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/demetrius"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src/demetrius/data",
+]

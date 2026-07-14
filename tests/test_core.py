@@ -254,3 +254,127 @@ class TestCRS:
 
         crs = get_target_utm_for_tiles(tiles)
         assert crs.startswith("EPSG:")
+
+
+class TestSnapper:
+    """Test grid snapping functionality."""
+
+    def test_snap_bounds_to_grid(self):
+        """Test snapping bounds to grid."""
+        from src.demetrius.snapper import Snapper
+
+        snapper = Snapper()
+
+        # Test snapping with cellsize 1.0
+        minx, miny, maxx, maxy = snapper.snap_bounds(
+            10.123, 20.456, 30.789, 40.999, cellsize=1.0
+        )
+        assert minx == 10.0  # floor(10.123)
+        assert miny == 20.0  # floor(20.456)
+        assert maxx == 31.0  # ceil(30.789)
+        assert maxy == 41.0  # ceil(40.999)
+
+    def test_snap_bounds_with_fractional_cellsize(self):
+        """Test snapping bounds with fractional cellsize."""
+        from src.demetrius.snapper import Snapper
+
+        snapper = Snapper()
+
+        # Test snapping with cellsize 0.5
+        minx, miny, maxx, maxy = snapper.snap_bounds(
+            10.1, 20.3, 30.7, 40.9, cellsize=0.5
+        )
+        assert minx == 10.0  # floor(10.1 / 0.5) * 0.5
+        assert miny == 20.0  # floor(20.3 / 0.5) * 0.5
+        assert maxx == 31.0  # ceil(30.7 / 0.5) * 0.5
+        assert maxy == 41.0  # ceil(40.9 / 0.5) * 0.5
+
+    def test_snap_bounds_already_aligned(self):
+        """Test snapping bounds that are already aligned."""
+        from src.demetrius.snapper import Snapper
+
+        snapper = Snapper()
+
+        # Test snapping with already-aligned bounds
+        minx, miny, maxx, maxy = snapper.snap_bounds(
+            10.0, 20.0, 30.0, 40.0, cellsize=1.0
+        )
+        assert minx == 10.0
+        assert miny == 20.0
+        assert maxx == 30.0
+        assert maxy == 40.0
+
+    def test_snap_bounds_negative_coordinates(self):
+        """Test snapping bounds with negative coordinates."""
+        from src.demetrius.snapper import Snapper
+
+        snapper = Snapper()
+
+        # Test snapping with negative coordinates
+        minx, miny, maxx, maxy = snapper.snap_bounds(
+            -30.789, -40.999, -10.123, -20.456, cellsize=1.0
+        )
+        assert minx == -31.0  # floor(-30.789)
+        assert miny == -41.0  # floor(-40.999)
+        assert maxx == -10.0  # ceil(-10.123)
+        assert maxy == -20.0  # ceil(-20.456)
+
+    def test_crs_aware_snapping_meters(self):
+        """Test CRS-aware snapping with meter-based CRS."""
+        from src.demetrius.snapper import Snapper
+
+        snapper = Snapper()
+
+        # EPSG:32111 uses meters
+        factor = snapper.get_conversion_factor_for_snapping("EPSG:32111")
+        assert abs(factor - 1.0) < 0.01, f"Expected ~1.0 for meters, got {factor}"
+
+    def test_crs_aware_snapping_feet(self):
+        """Test CRS-aware snapping with feet-based CRS."""
+        from src.demetrius.snapper import Snapper
+
+        snapper = Snapper()
+
+        # EPSG:2286 uses US survey feet
+        factor = snapper.get_conversion_factor_for_snapping("EPSG:2286")
+        # 1 meter = 3.28... US survey feet
+        assert 3.0 < factor < 3.5, f"Expected ~3.28 for feet, got {factor}"
+
+    def test_crs_aware_snapping_unknown(self):
+        """Test CRS-aware snapping with unknown CRS."""
+        from src.demetrius.snapper import Snapper
+
+        snapper = Snapper()
+
+        # Invalid CRS should default to 1.0
+        factor = snapper.get_conversion_factor_for_snapping("EPSG:999999")
+        assert factor == 1.0, f"Expected 1.0 for unknown CRS, got {factor}"
+
+
+class TestReprojector:
+    """Test reprojector with cellsize support."""
+
+    def test_reprojector_cellsize_validation(self):
+        """Test that reprojector validates cellsize."""
+        from src.demetrius.reprojector import Reprojector
+
+        reprojector = Reprojector()
+
+        # Test negative cellsize
+        with pytest.raises(ValueError, match="Cellsize must be positive"):
+            reprojector.reproject(
+                Path("/tmp/dummy.tif"),
+                Path("/tmp/out.tif"),
+                "EPSG:32618",
+                cellsize=-1,
+            )
+
+        # Test zero cellsize
+        with pytest.raises(ValueError, match="Cellsize must be positive"):
+            reprojector.reproject(
+                Path("/tmp/dummy.tif"),
+                Path("/tmp/out.tif"),
+                "EPSG:32618",
+                cellsize=0,
+            )
+

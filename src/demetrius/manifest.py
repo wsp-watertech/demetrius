@@ -18,6 +18,7 @@ class Manifest:
         aoi: AOI,
         tiles: list[Tile],
         buffer: int = 0,
+        cellsize: Optional[float] = None,
     ):
         """Create manifest from AOI and tiles.
 
@@ -25,10 +26,12 @@ class Manifest:
             aoi: Area of Interest
             tiles: Selected and prioritized tiles
             buffer: Buffer distance used for discovery
+            cellsize: Output cellsize in target CRS units (optional)
         """
         self.aoi = aoi
         self.tiles = tiles
         self.buffer = buffer
+        self.cellsize = cellsize
 
     def to_dict(self) -> dict[str, Any]:
         """Convert manifest to dictionary for serialization.
@@ -36,7 +39,7 @@ class Manifest:
         Returns:
             Dictionary representation
         """
-        return {
+        manifest_dict = {
             "aoi": {
                 "bounds": {
                     "min_x": float(self.aoi.bounds().min_x),
@@ -65,6 +68,11 @@ class Manifest:
                 for tile in self.tiles
             ],
         }
+        
+        if self.cellsize is not None:
+            manifest_dict["cellsize"] = self.cellsize
+            
+        return manifest_dict
 
     def save(self, path: Path | str) -> None:
         """Save manifest to JSON file.
@@ -135,4 +143,10 @@ class Manifest:
             )
             tiles.append(tile)
 
-        return cls(aoi=aoi, tiles=tiles, buffer=data.get("buffer", data.get("buffer_distance", 0)))
+        cellsize = data.get("cellsize")
+        return cls(
+            aoi=aoi, 
+            tiles=tiles, 
+            buffer=data.get("buffer", data.get("buffer_distance", 0)),
+            cellsize=cellsize,
+        )

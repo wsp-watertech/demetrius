@@ -78,7 +78,7 @@ demetrius Inspection Report
 
 Area of Interest:
   Bounds: (-74.4500, 40.0500) → (-74.4100, 40.0900)
-  Buffer distance: 1000 m
+  Buffer distance: 0 m
 
 Tiles Discovered:
   Total: 3 tile(s)
@@ -129,11 +129,30 @@ Requires manifest from previous `download-only` run.
 --aoi PATH                      Path to AOI (shapefile, GeoJSON, GeoPackage)
 --output PATH                   Output file path [default: dem.tif]
 --output-crs EPSG:CODE          Target CRS (e.g., EPSG:32618) [default: auto-detect]
---buffer-distance METERS        Buffer for tile discovery [default: 1000]
+--buffer METERS                 Buffer for tile discovery and clipping [default: 0]
+--cellsize FLOAT                Output cellsize in target CRS units [default: 1m converted to CRS units]
+--no-snap                       Disable grid snapping [default: enabled]
 --require-full-coverage         Fail if AOI not fully covered [default: True]
 --mode {full,download-only,process-only}
                                 Processing mode [default: full]
 ```
+
+### Default Cellsize and Grid Snapping
+
+By default, DEMs are generated with:
+- **Cellsize**: 1 meter, automatically converted to output CRS units
+  - UTM zones (meters): 1.0 meter
+  - State Plane (feet): 3.28083... feet
+  - Other units: automatic conversion
+- **Grid snapping**: Enabled, aligning to multiples of the cellsize
+
+This means all DEMs (even with different CRS selections) have equivalent 1-meter resolution in their native units. The actual pixel size appears different in different CRS (3.28... feet vs 1m) but represents the same geographic resolution.
+
+To override:
+- `--cellsize VALUE`: Use explicit cellsize instead of 1m default
+- `--no-snap`: Disable grid snapping (rarely needed)
+
+Both cellsize resampling and grid snapping use the same computed value for consistent alignment.
 
 ## AOI Geometry Formats
 
@@ -165,7 +184,8 @@ JSON file recording all inputs and selected tiles for reproducibility:
     "bounds": {"min_x": -74.45, "min_y": 40.05, "max_x": -74.41, "max_y": 40.09},
     "crs": "EPSG:4326"
   },
-  "buffer_distance": 1000,
+  "buffer": 1000,
+  "cellsize": 10.5,
   "tile_count": 3,
   "tiles": [
     {
@@ -181,11 +201,23 @@ JSON file recording all inputs and selected tiles for reproducibility:
 }
 ```
 
+Note: `cellsize` is only included if specified; otherwise the field is omitted.
+
 ## How It Works
 
 ### 1. AOI Preparation
 
-Original geometry is buffered by `--buffer-distance` for tile discovery, but only original geometry is used for final clipping.
+Original geometry is buffered by `--buffer` distance for tile discovery AND for final clipping.
+
+The buffer is applied in the output CRS coordinate space to ensure accurate meter-based (or relevant units) buffering. This means:
+- If no `--output-crs` is specified, it's auto-detected based on initial unbuffered tile discovery
+- The buffered geometry is then used for both tile filtering and final clip operations
+
+### 1b. Output Resolution (Cellsize)
+
+If `--cellsize` is specified, the final DEM will be resampled to that resolution during reprojection. The cellsize units are in the target CRS units (e.g., meters for UTM zones, feet for State Plane feet zones).
+
+If `--cellsize` is not specified, native tile resolution is preserved (typically 1 meter for USGS 3DEP 1m DEM).
 
 ### 2. TNM Query
 
@@ -226,14 +258,17 @@ If tiles span multiple UTM zones, each zone is mosaicked separately, then reproj
 
 ### 7. Reprojection
 
-All tiles reprojected to target CRS (auto-detected or user-specified):
+All tiles reprojected to target CRS (auto-detected or user-specified), with optional resampling to specified cellsize:
 
 ```bash
 gdalwarp -t_srs EPSG:32618 -r bilinear -multi ...
+# With cellsize:
+gdalwarp -t_srs EPSG:32618 -tr 10.0 10.0 -r bilinear -multi ...
 ```
 
 - **Resampling**: Minimum bilinear (nearest neighbor forbidden)
 - **Multi-threaded**: Uses all available CPU cores
+- **Cellsize**: Optional target resolution (applied via `-tr` flag)
 
 ### 8. Clipping
 
@@ -243,7 +278,29 @@ Final raster clipped to original AOI using shapely geometry:
 gdalwarp -cutline aoi.geojson -crop_to_cutline ...
 ```
 
-### 9. COG Output
+### 9. Grid Snapping (Optional, Default Enabled)
+
+If snapping is enabled (default), the raster is snapped to a regular grid where all pixel boundaries are exact multiples of the snap distance:
+
+```bash
+# Snapping distance = 1m converted to output CRS units
+gdalwarp -te <snapped_minx> <snapped_miny> <snapped_maxx> <snapped_maxy> ...
+```
+
+**CRS-Aware Snapping:**
+- **Meters (UTM/projected)**: Snap distance is 1.0 meter
+- **US Survey Feet (State Plane)**: Snap distance is 3.28083... feet
+- **Other units**: Automatically converted from 1 meter
+
+This ensures:
+- Pixel boundaries align to multiples of snap distance in the output CRS
+- Consistent reproducible output across runs
+- Compatibility with downstream grid-based processing
+- CRS-native coordinate precision
+
+Snapping can be disabled with `--no-snap` or overridden with explicit `--cellsize`.
+
+### 10. COG Output
 
 Result converted to Cloud-Optimized GeoTIFF:
 
@@ -268,8 +325,37 @@ demetrius process \
   --aoi counties.geojson \
   --output counties_dem.tif \
   --output-crs EPSG:2272 \
-  --buffer-distance 5000
+  --buffer 5000
 ```
+
+### Resampled DEM with Specific Resolution
+
+```bash
+demetrius process \
+  --aoi site.shp \
+  --output dem_10m.tif \
+  --cellsize 10.0
+```
+
+With this command, the output DEM will be resampled to 10-meter resolution in the target CRS units, and snapped to multiples of 10.0.
+
+### Snapping with CRS-Specific Units
+
+```bash
+# EPSG:32111 (meters) - snaps to multiples of 1.0 meter
+demetrius process \
+  --aoi site.shp \
+  --output dem_utm.tif \
+  --output-crs EPSG:32111
+
+# EPSG:2286 (US survey feet) - snaps to multiples of 3.28... feet
+demetrius process \
+  --aoi site.shp \
+  --output dem_feet.tif \
+  --output-crs EPSG:2286
+```
+
+Both commands snap to the equivalent of 1 meter, but in their respective CRS units. This ensures consistent, reproducible grid alignment regardless of CRS.
 
 ### Two-stage processing (separate network/compute)
 

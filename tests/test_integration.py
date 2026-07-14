@@ -134,6 +134,69 @@ class TestManifest:
         assert data["tile_count"] == 1
         assert data["tiles"][0]["dataset_id"] == "PA_County"
 
+    def test_manifest_with_cellsize(self, tmp_path):
+        """Test manifest with cellsize."""
+        aoi = AOI(geometry=box(-74.5, 40.0, -74.4, 40.1), buffer=1000)
+        tiles = [
+            Tile(
+                id="test_tile",
+                dataset_id="PA_County",
+                tile_id="x0y0",
+                publication_date=datetime(2021, 11, 18),
+                last_updated=datetime(2021, 11, 22),
+                download_url="https://example.com/tile.tif",
+                bounds_wgs84=BoundingBox(min_x=-74.5, min_y=40.0, max_x=-74.4, max_y=40.1),
+                priority=0,
+            ),
+        ]
+
+        # Create manifest with cellsize
+        manifest = Manifest(aoi=aoi, tiles=tiles, buffer=1000, cellsize=10.5)
+        manifest_path = tmp_path / "manifest.json"
+        manifest.save(manifest_path)
+
+        # Read and verify cellsize in JSON
+        with open(manifest_path) as f:
+            data = json.load(f)
+
+        assert "cellsize" in data
+        assert data["cellsize"] == 10.5
+
+        # Load and verify cellsize is preserved
+        loaded = Manifest.load(manifest_path)
+        assert loaded.cellsize == 10.5
+
+    def test_manifest_without_cellsize(self, tmp_path):
+        """Test manifest without cellsize (backward compatibility)."""
+        aoi = AOI(geometry=box(-74.5, 40.0, -74.4, 40.1), buffer=1000)
+        tiles = [
+            Tile(
+                id="test_tile",
+                dataset_id="PA_County",
+                tile_id="x0y0",
+                publication_date=datetime(2021, 11, 18),
+                last_updated=datetime(2021, 11, 22),
+                download_url="https://example.com/tile.tif",
+                bounds_wgs84=BoundingBox(min_x=-74.5, min_y=40.0, max_x=-74.4, max_y=40.1),
+                priority=0,
+            ),
+        ]
+
+        # Create manifest without cellsize
+        manifest = Manifest(aoi=aoi, tiles=tiles, buffer=1000)
+        manifest_path = tmp_path / "manifest.json"
+        manifest.save(manifest_path)
+
+        # Verify cellsize is not in JSON when not specified
+        with open(manifest_path) as f:
+            data = json.load(f)
+
+        assert "cellsize" not in data
+
+        # Load and verify cellsize is None
+        loaded = Manifest.load(manifest_path)
+        assert loaded.cellsize is None
+
 
 class TestWorkflow:
     """Test complete workflow patterns."""

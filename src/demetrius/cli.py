@@ -9,6 +9,7 @@ import click
 
 from .coverage import validate_coverage
 from .downloader import TileDownloader
+from .elevation_converter import ElevationConverter
 from .filtering import filter_tiles_by_aoi
 from .inspector import InspectionReport
 from .manifest import Manifest
@@ -55,6 +56,18 @@ def cli():
     help="Buffer distance in meters for tile discovery",
 )
 @click.option(
+    "--cellsize",
+    default=None,
+    type=float,
+    help="Output cellsize in target CRS units (optional)",
+)
+@click.option(
+    "--no-snap",
+    is_flag=True,
+    default=False,
+    help="Disable grid snapping (default: enabled)",
+)
+@click.option(
     "--project-bounds",
     required=True,
     type=click.Path(exists=True),
@@ -72,7 +85,7 @@ def cli():
     type=click.Choice(["full", "download-only", "process-only"]),
     help="Processing mode",
 )
-def process(aoi, output, output_crs, buffer, project_bounds, require_full_coverage, mode):
+def process(aoi, output, output_crs, buffer, cellsize, no_snap, project_bounds, require_full_coverage, mode):
     """Process DEM workflow (default: full pipeline)."""
     try:
         from .cog import COGGenerator
@@ -83,6 +96,7 @@ def process(aoi, output, output_crs, buffer, project_bounds, require_full_covera
         from .mosaicker import VRTMosaicker
         from .reprojector import Reprojector
         from .project_boundaries import ProjectBoundaries
+        from .snapper import Snapper
         import tempfile
         from collections import defaultdict
 
@@ -96,7 +110,7 @@ def process(aoi, output, output_crs, buffer, project_bounds, require_full_covera
         aoi_obj = AOI.from_file(aoi, buffer=buffer)
         click.echo(f"✓ Loaded AOI")
 
-        # Determine target CRS early (needed for buffering)
+        # Determine target CRS early (needed for buffering and cellsize conversion)
         if not output_crs:
             click.echo("\n[0/5] Auto-detecting target CRS...")
             source = TNMTileSource()
@@ -110,6 +124,21 @@ def process(aoi, output, output_crs, buffer, project_bounds, require_full_covera
                 raise ValueError("No tiles found for CRS auto-detection")
         else:
             click.echo(f"Using target CRS: {output_crs}")
+
+        # Compute default cellsize if not specified
+        # Default is 1 meter converted to the units of output_crs
+        effective_cellsize = cellsize
+        if cellsize is None:
+            snapper = Snapper()
+            effective_cellsize = snapper.get_conversion_factor_for_snapping(output_crs)
+            if no_snap:
+                click.echo(
+                    f"Using default cellsize (snapping disabled): 1m in {output_crs} units = {effective_cellsize:.9f}"
+                )
+            else:
+                click.echo(
+                    f"Using default cellsize (snapping enabled): 1m in {output_crs} units = {effective_cellsize:.9f}"
+                )
 
         # Step 1: Query TNM
         if mode != "process-only":
@@ -161,7 +190,7 @@ def process(aoi, output, output_crs, buffer, project_bounds, require_full_covera
             click.echo(f"✓ Found {len(prioritized_tiles)} tiles from {len(set(t.dataset_id for t in prioritized_tiles))} datasets")
 
             # Create manifest
-            manifest = Manifest(aoi_obj, prioritized_tiles, buffer)
+            manifest = Manifest(aoi_obj, prioritized_tiles, buffer, cellsize)
             manifest_path = Path(output).parent / "manifest.json"
             manifest.save(manifest_path)
             click.echo(f"✓ Saved manifest to {manifest_path}")
@@ -233,7 +262,7 @@ def process(aoi, output, output_crs, buffer, project_bounds, require_full_covera
             # Reproject
             reprojector = Reprojector()
             reprojected = Path(tmpdir) / "reprojected.tif"
-            reprojector.reproject(merged_raster, reprojected, output_crs)
+            reprojector.reproject(merged_raster, reprojected, output_crs, cellsize=effective_cellsize)
 
             # Clip
             click.echo("Clipping to AOI with buffer...")
@@ -257,12 +286,31 @@ def process(aoi, output, output_crs, buffer, project_bounds, require_full_covera
             )
             click.echo(f"✓ Reprojected and clipped")
 
-            # Step 5: Generate COG
-            click.echo(f"\n[5/5] Generating Cloud-Optimized GeoTIFF...")
+            # Step 5: Snap to grid (optional)
+            if not no_snap:
+                click.echo(f"\n[5/5] Snapping to grid and converting elevation units...")
+                
+                snapped = Path(tmpdir) / "snapped.tif"
+                # Use effective_cellsize which is 1m converted to output_crs units
+                # (or explicit cellsize if user provided one)
+                snapper = Snapper()
+                snapper.snap(clipped, snapped, cellsize=effective_cellsize)
+                
+                # Use snapped file for elevation conversion
+                clipped = snapped
+            else:
+                click.echo(f"\n[5/5] Converting elevation units and generating Cloud-Optimized GeoTIFF...")
+
+            # Convert elevation units if necessary
+            elevation_converter = ElevationConverter()
+            converted = Path(tmpdir) / "converted.tif"
+            elevation_converter.convert(clipped, converted, output_crs)
+            
+            # Generate COG from converted raster
             cog_gen = COGGenerator()
             output_path = Path(output)
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            cog_gen.generate(clipped, output_path)
+            cog_gen.generate(converted, output_path)
 
         click.echo(f"\n" + "=" * 70)
         click.echo(f"✓ SUCCESS! DEM saved to: {output_path}")

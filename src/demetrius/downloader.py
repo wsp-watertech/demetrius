@@ -13,7 +13,7 @@ from .models import Tile
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_DATA_DIR = Path.home() / ".demetrius_data"
+DEFAULT_DATA_DIR = Path.home() / ".demetrius"
 MAX_RETRIES = 3
 RETRY_BACKOFF = 2
 
@@ -30,11 +30,21 @@ class TileDownloader:
     ):
         """Initialize downloader.
 
-        Args:
-            data_dir: Base directory for downloads (default: ~/.demetrius_data)
-            max_workers: Number of parallel download threads
-            timeout: Request timeout in seconds
-            progress_callback: Optional callback(completed, total) for progress tracking
+        Parameters
+        ----------
+        data_dir : Path | None, optional
+            Base directory for downloads. Defaults to ``~/.demetrius``.
+        max_workers : int, default=4
+            Number of parallel download threads.
+        timeout : float, default=60.0
+            Request timeout in seconds.
+        progress_callback : Callable[[int, int], None] | None, optional
+            Optional callback receiving completed and total download counts.
+
+        Returns
+        -------
+        None
+            Initializes the downloader instance.
         """
         self.data_dir = Path(data_dir) if data_dir else DEFAULT_DATA_DIR
         self.max_workers = max_workers
@@ -44,14 +54,20 @@ class TileDownloader:
     def download(self, tiles: Sequence[Tile]) -> list[Tile]:
         """Download all tiles in parallel.
 
-        Args:
-            tiles: Tiles to download
+        Parameters
+        ----------
+        tiles : Sequence[Tile]
+            Tiles to download.
 
-        Returns:
-            Tiles with local_path populated
+        Returns
+        -------
+        list[Tile]
+            Tiles with ``local_path`` populated.
 
-        Raises:
-            ValueError: If download fails after retries
+        Raises
+        ------
+        ValueError
+            If any download fails after retries.
         """
         logger.info(f"Preparing to download {len(tiles)} tiles to {self.data_dir}")
 
@@ -62,9 +78,7 @@ class TileDownloader:
         failed = []
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = {
-                executor.submit(self._download_single, tile): tile for tile in tiles
-            }
+            futures = {executor.submit(self._download_single, tile): tile for tile in tiles}
 
             completed_count = 0
             for future in as_completed(futures):
@@ -83,8 +97,7 @@ class TileDownloader:
 
         if failed:
             raise ValueError(
-                f"Failed to download {len(failed)} tile(s): "
-                f"{', '.join(t.id for t in failed)}"
+                f"Failed to download {len(failed)} tile(s): {', '.join(t.id for t in failed)}"
             )
 
         logger.info(f"✓ Downloaded {len(downloaded)} tiles")
@@ -93,15 +106,22 @@ class TileDownloader:
     def _download_single(self, tile: Tile, attempt: int = 1) -> Tile:
         """Download a single tile with retry logic.
 
-        Args:
-            tile: Tile to download
-            attempt: Current attempt number
+        Parameters
+        ----------
+        tile : Tile
+            Tile to download.
+        attempt : int, default=1
+            Current attempt number.
 
-        Returns:
-            Tile with local_path populated
+        Returns
+        -------
+        Tile
+            Tile with ``local_path`` populated.
 
-        Raises:
-            ValueError: If download fails
+        Raises
+        ------
+        ValueError
+            If the download fails after all retry attempts.
         """
         local_path = self._get_local_path(tile)
 
@@ -135,9 +155,7 @@ class TileDownloader:
 
         except Exception as e:
             if attempt < MAX_RETRIES:
-                logger.warning(
-                    f"Attempt {attempt} failed for tile {tile.id}, retrying... ({e})"
-                )
+                logger.warning(f"Attempt {attempt} failed for tile {tile.id}, retrying... ({e})")
                 import time
 
                 time.sleep(RETRY_BACKOFF**attempt)
@@ -148,11 +166,15 @@ class TileDownloader:
     def _get_local_path(self, tile: Tile) -> Path:
         """Get local file path for tile.
 
-        Args:
-            tile: Tile to get path for
+        Parameters
+        ----------
+        tile : Tile
+            Tile to get the local path for.
 
-        Returns:
-            Path object for tile location
+        Returns
+        -------
+        Path
+            Local filesystem path for the tile.
         """
         dataset_dir = self.data_dir / f"dataset_{tile.dataset_id}"
         filename = f"tile_{tile.tile_id}.tif"

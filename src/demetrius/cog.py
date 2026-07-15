@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 class COGGenerator:
-    """Generate Cloud-Optimized GeoTIFF from raster."""
+    """Generate Cloud-Optimized GeoTIFFs from rasters."""
 
     def generate(
         self,
@@ -17,7 +17,7 @@ class COGGenerator:
         compression: str = "deflate",
         blocksize: int = 512,
     ) -> Path:
-        """Generate Cloud-Optimized GeoTIFF.
+        """Generate a Cloud-Optimized GeoTIFF.
 
         Uses gdal_translate to create a COG with:
         - Internal tiling
@@ -25,17 +25,26 @@ class COGGenerator:
         - Compression for smaller file size
         - Valid NODATA handling
 
-        Args:
-            input_raster: Input raster path
-            output_cog: Output COG path
-            compression: Compression method (deflate, lzw, etc.)
-            blocksize: Internal tile size in pixels
+        Parameters
+        ----------
+        input_raster : Path
+            Input raster path.
+        output_cog : Path
+            Output COG path.
+        compression : str, default="deflate"
+            Compression method, such as ``deflate`` or ``lzw``.
+        blocksize : int, default=512
+            Internal tile size in pixels.
 
-        Returns:
-            Path to generated COG
+        Returns
+        -------
+        Path
+            Path to the generated COG.
 
-        Raises:
-            RuntimeError: If COG generation fails or gdal_translate is not available
+        Raises
+        ------
+        RuntimeError
+            If COG generation fails or ``gdal_translate`` is not available.
         """
         logger.info(f"Generating COG: {output_cog}")
 
@@ -68,6 +77,4 @@ class COGGenerator:
             return output_cog
 
         except FileNotFoundError:
-            raise RuntimeError(
-                "gdal_translate not found. Please install GDAL command-line tools."
-            )
+            raise RuntimeError("gdal_translate not found. Please install GDAL command-line tools.")

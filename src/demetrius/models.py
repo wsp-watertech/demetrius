@@ -22,6 +22,23 @@ class BoundingBox(BaseModel):
     @field_validator("min_x", "max_x")
     @classmethod
     def validate_lon(cls, v: float) -> float:
+        """Validate longitude values.
+
+        Parameters
+        ----------
+        v : float
+            Longitude value to validate.
+
+        Returns
+        -------
+        float
+            Validated longitude value.
+
+        Raises
+        ------
+        ValueError
+            If the longitude is outside the valid range.
+        """
         if not -180 <= v <= 180:
             raise ValueError("Longitude must be between -180 and 180")
         return v
@@ -29,16 +46,45 @@ class BoundingBox(BaseModel):
     @field_validator("min_y", "max_y")
     @classmethod
     def validate_lat(cls, v: float) -> float:
+        """Validate latitude values.
+
+        Parameters
+        ----------
+        v : float
+            Latitude value to validate.
+
+        Returns
+        -------
+        float
+            Validated latitude value.
+
+        Raises
+        ------
+        ValueError
+            If the latitude is outside the valid range.
+        """
         if not -90 <= v <= 90:
             raise ValueError("Latitude must be between -90 and 90")
         return v
 
     def as_tuple(self) -> tuple[float, float, float, float]:
-        """Return as (min_x, min_y, max_x, max_y) tuple."""
+        """Return the bounds as a tuple.
+
+        Returns
+        -------
+        tuple[float, float, float, float]
+            Tuple in ``(min_x, min_y, max_x, max_y)`` order.
+        """
         return (self.min_x, self.min_y, self.max_x, self.max_y)
 
     def to_polygon(self) -> Polygon:
-        """Convert to shapely Polygon."""
+        """Convert the bounding box to a shapely polygon.
+
+        Returns
+        -------
+        Polygon
+            Polygon representing the bounding box extent.
+        """
         return box(self.min_x, self.min_y, self.max_x, self.max_y)
 
 
@@ -73,9 +119,7 @@ class Tile(BaseModel):
     download_url: str = Field(..., description="Direct download URL from TNM")
     bounds_wgs84: BoundingBox = Field(..., description="Bounding box in EPSG:4326")
     priority: int = Field(..., description="Dataset priority (0=newest, 1, 2...)")
-    local_path: Optional[str] = Field(
-        default=None, description="Local file path after download"
-    )
+    local_path: Optional[str] = Field(default=None, description="Local file path after download")
 
 
 class AOI(BaseModel):
@@ -88,96 +132,121 @@ class AOI(BaseModel):
     buffer: int = Field(default=0, description="Buffer distance in meters")
 
     def bounds(self) -> BoundingBox:
-        """Get bounding box of AOI."""
+        """Get the AOI bounding box.
+
+        Returns
+        -------
+        BoundingBox
+            Bounding box of the AOI geometry.
+        """
         minx, miny, maxx, maxy = self.geometry.bounds
         return BoundingBox(min_x=minx, min_y=miny, max_x=maxx, max_y=maxy)
 
     def buffered_bounds(self) -> BoundingBox:
         """Get bounding box of buffered AOI.
-        
-        Buffers in Web Mercator to maintain meter-based distance,
-        then returns bounding box in WGS84.
+
+        Buffers in Web Mercator to maintain meter-based distance, then
+        returns bounding box in WGS84.
+
+        Returns
+        -------
+        BoundingBox
+            Bounding box of the buffered AOI in WGS84.
         """
         if self.buffer == 0:
             return self.bounds()
-        
+
         # Reproject to Web Mercator for buffering
-        gdf = __import__('geopandas').GeoDataFrame(
-            [{'geometry': self.geometry}], crs=self.crs
-        )
+        gdf = __import__("geopandas").GeoDataFrame([{"geometry": self.geometry}], crs=self.crs)
         gdf_projected = gdf.to_crs("EPSG:3857")
         buffered = gdf_projected.iloc[0].geometry.buffer(self.buffer)
-        
+
         # Reproject back to WGS84
-        gdf_buffered = __import__('geopandas').GeoDataFrame(
-            [{'geometry': buffered}], crs="EPSG:3857"
+        gdf_buffered = __import__("geopandas").GeoDataFrame(
+            [{"geometry": buffered}], crs="EPSG:3857"
         )
         gdf_wgs84 = gdf_buffered.to_crs("EPSG:4326")
         buffered_wgs84 = gdf_wgs84.iloc[0].geometry
-        
+
         minx, miny, maxx, maxy = buffered_wgs84.bounds
         return BoundingBox(min_x=minx, min_y=miny, max_x=maxx, max_y=maxy)
 
     def buffered_geometry(self) -> BaseGeometry:
         """Get buffered AOI geometry in WGS84.
-        
+
         Returns the original geometry if buffer is 0.
         Buffers in Web Mercator for global consistency, then returns in WGS84.
+
+        Returns
+        -------
+        BaseGeometry
+            Buffered AOI geometry in WGS84.
         """
         if self.buffer == 0:
             return self.geometry
-        
+
         import geopandas as gpd
-        
+
         # Reproject to Web Mercator for buffering
-        gdf = gpd.GeoDataFrame([{'geometry': self.geometry}], crs=self.crs)
+        gdf = gpd.GeoDataFrame([{"geometry": self.geometry}], crs=self.crs)
         gdf_projected = gdf.to_crs("EPSG:3857")
         buffered = gdf_projected.iloc[0].geometry.buffer(self.buffer)
-        
+
         # Reproject back to WGS84
-        gdf_buffered = gpd.GeoDataFrame([{'geometry': buffered}], crs="EPSG:3857")
+        gdf_buffered = gpd.GeoDataFrame([{"geometry": buffered}], crs="EPSG:3857")
         gdf_wgs84 = gdf_buffered.to_crs("EPSG:4326")
         return gdf_wgs84.iloc[0].geometry
-    
+
     def buffered_geometry_in_crs(self, target_crs: str) -> BaseGeometry:
         """Get buffered AOI geometry in a specific CRS.
-        
+
         Reprojects to target CRS, buffers with specified distance in that CRS,
         then returns geometry in target CRS.
-        
-        Args:
-            target_crs: Target CRS (e.g., "EPSG:32111" for UTM)
-            
-        Returns:
-            Buffered geometry in target CRS. Returns original geometry reprojected if buffer is 0.
+
+        Parameters
+        ----------
+        target_crs : str
+            Target CRS, for example ``"EPSG:32111"`` for UTM.
+
+        Returns
+        -------
+        BaseGeometry
+            Buffered geometry in the target CRS. Returns the reprojected
+            original geometry if ``buffer`` is 0.
         """
         import geopandas as gpd
-        
+
         # Reproject to target CRS
-        gdf = gpd.GeoDataFrame([{'geometry': self.geometry}], crs=self.crs)
+        gdf = gpd.GeoDataFrame([{"geometry": self.geometry}], crs=self.crs)
         try:
             gdf_projected = gdf.to_crs(target_crs)
             geom_projected = gdf_projected.iloc[0].geometry
         except Exception as e:
             # If reprojection fails (datum transformation issue), fall back to Web Mercator buffering
-            logger.warning(f"Reprojection to {target_crs} failed: {e}. Falling back to Web Mercator buffering.")
+            logger.warning(
+                f"Reprojection to {target_crs} failed: {e}. Falling back to Web Mercator buffering."
+            )
             return self.buffered_geometry()
-        
+
         # Check for invalid geometry after reprojection (e.g., coordinates with Infinity)
         try:
             # Try to validate by getting bounds
             bounds = geom_projected.bounds
-            if any(b == float('inf') or b == float('-inf') for b in bounds):
-                logger.warning(f"Invalid coordinates after reprojection to {target_crs}. Falling back to Web Mercator buffering.")
+            if any(b == float("inf") or b == float("-inf") for b in bounds):
+                logger.warning(
+                    f"Invalid coordinates after reprojection to {target_crs}. Falling back to Web Mercator buffering."
+                )
                 return self.buffered_geometry()
         except Exception as e:
-            logger.warning(f"Geometry validation failed after reprojection: {e}. Falling back to Web Mercator buffering.")
+            logger.warning(
+                f"Geometry validation failed after reprojection: {e}. Falling back to Web Mercator buffering."
+            )
             return self.buffered_geometry()
-        
+
         # Apply buffer if specified
         if self.buffer == 0:
             return geom_projected
-        
+
         # Buffer in target CRS with lower resolution if needed to avoid errors
         try:
             buffered = geom_projected.buffer(self.buffer)
@@ -188,48 +257,69 @@ class AOI(BaseModel):
                 buffered = geom_projected.buffer(self.buffer, resolution=8)
             except Exception as e2:
                 # If buffering still fails, fall back to Web Mercator buffering
-                logger.warning(f"Buffering with lower resolution also failed: {e2}. Falling back to Web Mercator buffering.")
+                logger.warning(
+                    f"Buffering with lower resolution also failed: {e2}. Falling back to Web Mercator buffering."
+                )
                 return self.buffered_geometry()
-        
+
         # Validate buffered geometry (but don't try to fix with buffer(0) if it fails)
         if not buffered.is_valid:
             try:
                 buffered = buffered.buffer(0)
             except Exception as e:
-                logger.warning(f"Could not fix invalid buffered geometry: {e}. Falling back to Web Mercator buffering.")
+                logger.warning(
+                    f"Could not fix invalid buffered geometry: {e}. Falling back to Web Mercator buffering."
+                )
                 return self.buffered_geometry()
-        
+
         return buffered
 
     @classmethod
     def from_file(cls, path: str, buffer: int = 0) -> "AOI":
         """Load AOI from geometry file (shapefile, GeoJSON, GeoPackage, Parquet).
-        
+
         Automatically detects format and uses appropriate reader.
         Converts to WGS84 (EPSG:4326) if needed.
         For Parquet files, uses PyArrow which is required.
+
+        Parameters
+        ----------
+        path : str
+            Path to the geometry file.
+        buffer : int, default=0
+            Buffer distance in meters.
+
+        Returns
+        -------
+        AOI
+            Loaded AOI instance.
+
+        Raises
+        ------
+        ValueError
+            If the file contains no geometries.
         """
         import geopandas as gpd
         from pathlib import Path
 
         path_obj = Path(path)
-        
+
         # For parquet files, use read_parquet explicitly
-        if path_obj.suffix.lower() == '.parquet':
+        if path_obj.suffix.lower() == ".parquet":
             gdf = gpd.read_parquet(path)
         else:
             gdf = gpd.read_file(path)
-        
+
         if gdf.empty:
             raise ValueError(f"No geometries found in {path}")
-        
+
         # Convert to WGS84 if not already
         if gdf.crs and gdf.crs.to_epsg() != 4326:
             gdf = gdf.to_crs("EPSG:4326")
-        
+
         if len(gdf) > 1:
             geometry = gdf.unary_union
         else:
             geometry = gdf.iloc[0].geometry
-        
+
         return cls(geometry=geometry, buffer=buffer)

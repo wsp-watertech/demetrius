@@ -17,8 +17,15 @@ class DatasetMerger:
     def __init__(self, working_dir: Path):
         """Initialize merger.
 
-        Args:
-            working_dir: Directory for working files
+        Parameters
+        ----------
+        working_dir : Path
+            Directory for working files.
+
+        Returns
+        -------
+        None
+            Initializes the merger instance.
         """
         self.working_dir = Path(working_dir)
 
@@ -33,13 +40,24 @@ class DatasetMerger:
         Process datasets from oldest (lowest priority) to newest.
         Newer datasets completely overwrite older ones (no blending).
 
-        Args:
-            tiles: All selected tiles (should be pre-sorted by priority)
-            output_path: Output raster path
-            dataset_vrts: Optional pre-created VRTs for each dataset
+        Parameters
+        ----------
+        tiles : Sequence[Tile]
+            All selected tiles, ideally pre-sorted by priority.
+        output_path : Path
+            Output raster path.
+        dataset_vrts : dict[str, Path] | None, optional
+            Optional pre-created VRTs for each dataset.
 
-        Returns:
-            Path to merged raster
+        Returns
+        -------
+        Path
+            Path to the merged raster.
+
+        Raises
+        ------
+        ValueError
+            If there are no datasets to merge or no merged dataset is created.
         """
         # Group by dataset and sort by priority
         dataset_groups: dict[str, list[Tile]] = defaultdict(list)
@@ -65,7 +83,9 @@ class DatasetMerger:
 
         for i, (dataset_id, priority) in enumerate(sorted_datasets):
             dataset_tiles = dataset_groups[dataset_id]
-            logger.info(f"Processing dataset {dataset_id} (priority {priority}) with {len(dataset_tiles)} tiles")
+            logger.info(
+                f"Processing dataset {dataset_id} (priority {priority}) with {len(dataset_tiles)} tiles"
+            )
 
             # Use provided VRT if available, otherwise prepare from tiles
             if dataset_vrts and dataset_id in dataset_vrts:
@@ -93,22 +113,40 @@ class DatasetMerger:
         return current_raster
 
     def _prepare_dataset(self, dataset_id: str, tiles: Sequence[Tile]) -> Path:
-        """Prepare dataset for merging (currently returns first tile path).
+        """Prepare dataset for merging (VRT of all tiles or single tile).
 
-        In production, would create a VRT of all tiles in the dataset.
+        Parameters
+        ----------
+        dataset_id : str
+            Dataset identifier.
+        tiles : Sequence[Tile]
+            Tiles in the dataset.
 
-        Args:
-            dataset_id: Dataset identifier
-            tiles: Tiles in dataset
+        Returns
+        -------
+        Path
+            Path to the dataset raster or VRT.
 
-        Returns:
-            Path to dataset raster/VRT
+        Raises
+        ------
+        ValueError
+            If there are no tiles or the tiles do not have local paths.
         """
         if not tiles or not tiles[0].local_path:
             raise ValueError(f"Cannot prepare dataset {dataset_id}: no tiles with local paths")
 
-        # TODO: Create VRT of all tiles
-        return Path(tiles[0].local_path)
+        # Single tile: return it directly
+        if len(tiles) == 1:
+            return Path(tiles[0].local_path)
+
+        # Multiple tiles: create VRT
+        vrt_path = Path(tempfile.gettempdir()) / f"dataset_{dataset_id}.vrt"
+        tile_paths = [str(Path(t.local_path)) for t in tiles]
+
+        cmd = ["gdalbuildvrt", "-quiet", str(vrt_path)] + tile_paths
+        subprocess.run(cmd, check=True, capture_output=True)
+
+        return vrt_path
 
     def _merge_with_gdalwarp(
         self,
@@ -123,16 +161,26 @@ class DatasetMerger:
         non-nodata" strategy: values should always be the most recent, except for
         nodata values which carry lowest priority.
 
-        Args:
-            source_raster: Existing raster (older data, lower priority)
-            overlay_raster: New raster to overlay (newer data, higher priority)
-            output_raster: Output path
+        Parameters
+        ----------
+        source_raster : Path
+            Existing raster containing older, lower-priority data.
+        overlay_raster : Path
+            New raster to overlay containing newer, higher-priority data.
+        output_raster : Path
+            Output path.
 
-        Returns:
-            Path to merged raster
+        Returns
+        -------
+        Path
+            Path to the merged raster.
 
-        Raises:
-            ValueError: If merge fails
+        Raises
+        ------
+        ValueError
+            If the merge fails.
+        RuntimeError
+            If ``gdalwarp`` is not available.
         """
         logger.debug(f"Merging {overlay_raster} onto {source_raster} (skipping nodata in newer)")
 
@@ -161,6 +209,4 @@ class DatasetMerger:
             return output_raster
 
         except FileNotFoundError:
-            raise RuntimeError(
-                "gdalwarp not found. Please install GDAL command-line tools."
-            )
+            raise RuntimeError("gdalwarp not found. Please install GDAL command-line tools.")

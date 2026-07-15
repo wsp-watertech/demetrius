@@ -22,11 +22,21 @@ class Manifest:
     ):
         """Create manifest from AOI and tiles.
 
-        Args:
-            aoi: Area of Interest
-            tiles: Selected and prioritized tiles
-            buffer: Buffer distance used for discovery
-            cellsize: Output cellsize in target CRS units (optional)
+        Parameters
+        ----------
+        aoi : AOI
+            Area of interest.
+        tiles : list[Tile]
+            Selected and prioritized tiles.
+        buffer : int, default=0
+            Buffer distance used for discovery.
+        cellsize : float | None, optional
+            Output cell size in target CRS units.
+
+        Returns
+        -------
+        None
+            Initializes the manifest instance.
         """
         self.aoi = aoi
         self.tiles = tiles
@@ -36,8 +46,10 @@ class Manifest:
     def to_dict(self) -> dict[str, Any]:
         """Convert manifest to dictionary for serialization.
 
-        Returns:
-            Dictionary representation
+        Returns
+        -------
+        dict[str, Any]
+            Dictionary representation of the manifest.
         """
         manifest_dict = {
             "aoi": {
@@ -68,17 +80,24 @@ class Manifest:
                 for tile in self.tiles
             ],
         }
-        
+
         if self.cellsize is not None:
             manifest_dict["cellsize"] = self.cellsize
-            
+
         return manifest_dict
 
     def save(self, path: Path | str) -> None:
         """Save manifest to JSON file.
 
-        Args:
-            path: Path to save manifest.json
+        Parameters
+        ----------
+        path : Path | str
+            Path where ``manifest.json`` should be saved.
+
+        Returns
+        -------
+        None
+            Writes the manifest to disk.
         """
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -92,11 +111,15 @@ class Manifest:
     def load(cls, path: Path | str) -> "Manifest":
         """Load manifest from JSON file.
 
-        Args:
-            path: Path to manifest.json
+        Parameters
+        ----------
+        path : Path | str
+            Path to ``manifest.json``.
 
-        Returns:
-            Manifest object
+        Returns
+        -------
+        Manifest
+            Loaded manifest object.
         """
         path = Path(path)
 
@@ -145,8 +168,8 @@ class Manifest:
 
         cellsize = data.get("cellsize")
         return cls(
-            aoi=aoi, 
-            tiles=tiles, 
+            aoi=aoi,
+            tiles=tiles,
             buffer=data.get("buffer", data.get("buffer_distance", 0)),
             cellsize=cellsize,
         )

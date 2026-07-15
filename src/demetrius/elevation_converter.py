@@ -34,21 +34,26 @@ class ElevationConverter:
         horizontal coordinates (e.g., meters for UTM, feet for State Plane).
         This method returns those horizontal CRS units.
 
-        Args:
-            crs: CRS specification (e.g., "EPSG:32111")
+        Parameters
+        ----------
+        crs : str
+            CRS specification, such as ``"EPSG:32111"``.
 
-        Returns:
-            Unit name (e.g., "meter", "foot") or None if not found
+        Returns
+        -------
+        str | None
+            Unit name, such as ``"meter"`` or ``"foot"``, or ``None`` if not
+            found.
         """
         try:
             crs_obj = pyproj.CRS(crs)
-            
+
             # Get axis info for projected CRS linear units
-            if hasattr(crs_obj, 'axis_info') and crs_obj.axis_info:
+            if hasattr(crs_obj, "axis_info") and crs_obj.axis_info:
                 for axis in crs_obj.axis_info:
                     if axis.unit_name:
                         return axis.unit_name.lower()
-            
+
             return None
         except Exception as e:
             logger.warning(f"Could not determine linear units for {crs}: {e}")
@@ -58,30 +63,35 @@ class ElevationConverter:
     def get_conversion_factor(crs: str) -> float:
         """Get conversion factor from meters to CRS linear units.
 
-        Args:
-            crs: Target CRS specification
+        Parameters
+        ----------
+        crs : str
+            Target CRS specification.
 
-        Returns:
-            Conversion factor (multiply meters by this to get target units).
-            Returns 1.0 if target is meters or units cannot be determined.
+        Returns
+        -------
+        float
+            Conversion factor used to multiply meters into target units.
+            Returns ``1.0`` if the target already uses meters or the units
+            cannot be determined.
         """
         units = ElevationConverter.get_linear_units(crs)
         if not units:
             return 1.0
-        
+
         units_lower = units.lower().strip()
-        
+
         # Direct lookup
         if units_lower in ElevationConverter.UNIT_TO_METERS:
             factor = ElevationConverter.UNIT_TO_METERS[units_lower]
             return 1.0 / factor if factor > 0 else 1.0
-        
+
         # Partial matches
         for key, factor in ElevationConverter.UNIT_TO_METERS.items():
             if key.lower() in units_lower or units_lower in key.lower():
                 logger.info(f"Matched unit '{units}' to '{key}'")
                 return 1.0 / factor if factor > 0 else 1.0
-        
+
         logger.warning(f"Unknown linear unit: {units}. No conversion applied.")
         return 1.0
 
@@ -109,33 +119,42 @@ class ElevationConverter:
         If no conversion is needed (target CRS uses meters), the file is
         copied as-is.
 
-        Args:
-            input_raster: Input raster (elevation values in meters)
-            output_raster: Output raster path
-            target_crs: Target CRS for unit determination
+        Parameters
+        ----------
+        input_raster : Path
+            Input raster with elevation values in meters.
+        output_raster : Path
+            Output raster path.
+        target_crs : str
+            Target CRS used for unit determination.
 
-        Returns:
-            Path to converted raster
+        Returns
+        -------
+        Path
+            Path to the converted raster.
 
-        Raises:
-            RuntimeError: If conversion fails or gdal_translate is unavailable
+        Raises
+        ------
+        RuntimeError
+            If conversion fails or ``gdal_translate`` is unavailable.
         """
         factor = self.get_conversion_factor(target_crs)
         units = self.get_linear_units(target_crs)
-        
+
         logger.info(f"Elevation conversion: multiply by {factor:.6f}")
         if units:
             logger.info(f"Target units: {units}")
-        
+
         # If no conversion needed, just copy
         if abs(factor - 1.0) < 1e-10:
             logger.info("No elevation conversion needed (target units are meters)")
             import shutil
+
             shutil.copy2(input_raster, output_raster)
             return output_raster
-        
+
         logger.info(f"Converting elevation from meters to {units or 'target units'}")
-        
+
         try:
             # Multiply every pixel value by `factor` using a linear rescale
             # from [0, 1] to [0, factor]. Using a 0..1 source range (rather
@@ -172,8 +191,6 @@ class ElevationConverter:
 
             logger.debug(f"Converted elevation to {output_raster}")
             return output_raster
-        
+
         except FileNotFoundError:
-            raise RuntimeError(
-                "gdal_translate not found. Please install GDAL command-line tools."
-            )
+            raise RuntimeError("gdal_translate not found. Please install GDAL command-line tools.")

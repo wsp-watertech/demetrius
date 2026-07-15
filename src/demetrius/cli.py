@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 @click.group()
 def cli():
-    """demetrius - High-resolution DEM assembly from USGS 3DEP data."""
+    """demetrius: High-resolution DEM assembly from USGS 3DEP data."""
     pass
 
 
@@ -91,8 +91,52 @@ def cli():
     type=click.Choice(["full", "download-only", "process-only"]),
     help="Processing mode",
 )
-def process(aoi, output, output_crs, ffrd, buffer, cellsize, no_snap, project_bounds, require_full_coverage, mode):
-    """Process DEM workflow (default: full pipeline)."""
+def process(
+    aoi,
+    output,
+    output_crs,
+    ffrd,
+    buffer,
+    cellsize,
+    no_snap,
+    project_bounds,
+    require_full_coverage,
+    mode,
+):
+    """Process the DEM workflow.
+
+    Run the full demetrius pipeline, or selected download-only or
+    process-only stages, for the provided area of interest.
+
+    Parameters
+    ----------
+    aoi : str
+        Path to the AOI geometry file.
+    output : str
+        Output path for the generated Cloud-Optimized GeoTIFF.
+    output_crs : str | None
+        Target coordinate reference system for the output raster.
+    ffrd : bool
+        Whether to use the bundled FFRD projection and snapping defaults.
+    buffer : int
+        Buffer distance, in meters, used for tile discovery.
+    cellsize : float | None
+        Output cell size in target CRS units.
+    no_snap : bool
+        Whether grid snapping should be skipped.
+    project_bounds : str
+        Path to the project boundaries dataset.
+    require_full_coverage : bool
+        Whether the original AOI must be fully covered by the selected data.
+    mode : str
+        Processing mode to run: ``full``, ``download-only``, or
+        ``process-only``.
+
+    Returns
+    -------
+    None
+        This command writes output files and reports progress to the CLI.
+    """
     try:
         from .cog import COGGenerator
         from .clipper import Clipper
@@ -111,23 +155,23 @@ def process(aoi, output, output_crs, ffrd, buffer, cellsize, no_snap, project_bo
         if ffrd:
             if output_crs:
                 click.echo("⚠ --ffrd overrides --output-crs")
-            ffrd_path = get_projection_file('ffrd.prj')
+            ffrd_path = get_projection_file("ffrd.prj")
             if not ffrd_path:
                 raise RuntimeError("FFRD projection file not found")
-            
+
             # Load WKT from FFRD projection file
             ffrd_wkt = ffrd_path.read_text().strip()
             if not ffrd_wkt:
                 raise ValueError("FFRD projection file is empty")
-            
+
             output_crs = ffrd_wkt
             click.echo(f"Using FFRD custom projection")
-            
+
             # Force snapping when using --ffrd
             if no_snap:
                 click.echo("⚠ --ffrd requires snapping (--no-snap ignored)")
             no_snap = False
-            
+
             # Use cellsize=4 unless explicitly specified
             if cellsize is None:
                 cellsize = 4.0
@@ -177,21 +221,26 @@ def process(aoi, output, output_crs, ffrd, buffer, cellsize, no_snap, project_bo
         if mode != "process-only":
             click.echo("\n[1/5] Querying TNM for tiles...")
             source = TNMTileSource()
-            
+
             # Get buffered bounds in output CRS
             if buffer > 0:
                 try:
                     buffered_geom_in_output_crs = aoi_obj.buffered_geometry_in_crs(output_crs)
                     # Check if buffering was successful (geometry should be valid and in expected CRS)
                     bounds = buffered_geom_in_output_crs.bounds
-                    if any(b == float('inf') or b == float('-inf') for b in bounds):
+                    if any(b == float("inf") or b == float("-inf") for b in bounds):
                         # Buffering fell back to Web Mercator, geometry is in WGS84
-                        logger.info("Buffering fell back to Web Mercator, using Web Mercator-buffered bounds")
+                        logger.info(
+                            "Buffering fell back to Web Mercator, using Web Mercator-buffered bounds"
+                        )
                         buffered_bbox = aoi_obj.buffered_bounds()
                     else:
                         # Buffering succeeded in output CRS, reproject back to WGS84 for TNM search
                         import geopandas as gpd
-                        gdf = gpd.GeoDataFrame([{'geometry': buffered_geom_in_output_crs}], crs=output_crs)
+
+                        gdf = gpd.GeoDataFrame(
+                            [{"geometry": buffered_geom_in_output_crs}], crs=output_crs
+                        )
                         gdf_wgs84 = gdf.to_crs("EPSG:4326")
                         buffered_geom_wgs84 = gdf_wgs84.iloc[0].geometry
                         buffered_bbox = BoundingBox(
@@ -201,11 +250,13 @@ def process(aoi, output, output_crs, ffrd, buffer, cellsize, no_snap, project_bo
                             max_y=buffered_geom_wgs84.bounds[3],
                         )
                 except Exception as e:
-                    logger.warning(f"Error computing buffered geometry in output CRS: {e}. Using Web Mercator-buffered bounds.")
+                    logger.warning(
+                        f"Error computing buffered geometry in output CRS: {e}. Using Web Mercator-buffered bounds."
+                    )
                     buffered_bbox = aoi_obj.buffered_bounds()
             else:
                 buffered_bbox = aoi_obj.bounds()
-            
+
             all_tiles = source.search(buffered_bbox)
 
             # Filter by AOI with project boundaries
@@ -220,11 +271,14 @@ def process(aoi, output, output_crs, ffrd, buffer, cellsize, no_snap, project_bo
             click.echo("Validating coverage...")
             validate_coverage(prioritized_tiles, aoi_obj, proj_bounds, require_full_coverage)
 
-            click.echo(f"✓ Found {len(prioritized_tiles)} tiles from {len(set(t.dataset_id for t in prioritized_tiles))} datasets")
+            click.echo(
+                f"✓ Found {len(prioritized_tiles)} tiles from {len(set(t.dataset_id for t in prioritized_tiles))} datasets"
+            )
 
             # Create manifest
             manifest = Manifest(aoi_obj, prioritized_tiles, buffer, cellsize)
-            manifest_path = Path(output).parent / "manifest.json"
+            output_stem = Path(output).stem
+            manifest_path = Path(output).parent / f"{output_stem}.tif.manifest.json"
             manifest.save(manifest_path)
             click.echo(f"✓ Saved manifest to {manifest_path}")
 
@@ -235,7 +289,8 @@ def process(aoi, output, output_crs, ffrd, buffer, cellsize, no_snap, project_bo
         else:
             # Load manifest for process-only mode
             click.echo("Loading manifest for process-only mode...")
-            manifest_path = Path(output).parent / "manifest.json"
+            output_stem = Path(output).stem
+            manifest_path = Path(output).parent / f"{output_stem}.tif.manifest.json"
             manifest = Manifest.load(manifest_path)
             prioritized_tiles = manifest.tiles
             aoi_obj = manifest.aoi
@@ -295,20 +350,23 @@ def process(aoi, output, output_crs, ffrd, buffer, cellsize, no_snap, project_bo
             # Reproject
             reprojector = Reprojector()
             reprojected = Path(tmpdir) / "reprojected.tif"
-            reprojector.reproject(merged_raster, reprojected, output_crs, cellsize=effective_cellsize)
+            reprojector.reproject(
+                merged_raster, reprojected, output_crs, cellsize=effective_cellsize
+            )
 
             # Clip
             click.echo("Clipping to AOI with buffer...")
-            
+
             # Get buffered geometry in output CRS for accurate meter-based buffering
             clipping_geometry = aoi_obj.buffered_geometry_in_crs(output_crs)
-            
+
             # Reproject back to WGS84 for gdalwarp
             import geopandas as gpd
+
             gdf_clip = gpd.GeoDataFrame([{"geometry": clipping_geometry}], crs=output_crs)
             gdf_wgs84 = gdf_clip.to_crs("EPSG:4326")
             clipping_geometry_wgs84 = gdf_wgs84.iloc[0].geometry
-            
+
             clipper = Clipper()
             clipped = Path(tmpdir) / "clipped.tif"
             clipper.clip(
@@ -322,23 +380,25 @@ def process(aoi, output, output_crs, ffrd, buffer, cellsize, no_snap, project_bo
             # Step 5: Snap to grid (optional)
             if not no_snap:
                 click.echo(f"\n[5/5] Snapping to grid and converting elevation units...")
-                
+
                 snapped = Path(tmpdir) / "snapped.tif"
                 # Use effective_cellsize which is 1m converted to output_crs units
                 # (or explicit cellsize if user provided one)
                 snapper = Snapper()
                 snapper.snap(clipped, snapped, cellsize=effective_cellsize)
-                
+
                 # Use snapped file for elevation conversion
                 clipped = snapped
             else:
-                click.echo(f"\n[5/5] Converting elevation units and generating Cloud-Optimized GeoTIFF...")
+                click.echo(
+                    f"\n[5/5] Converting elevation units and generating Cloud-Optimized GeoTIFF..."
+                )
 
             # Convert elevation units if necessary
             elevation_converter = ElevationConverter()
             converted = Path(tmpdir) / "converted.tif"
             elevation_converter.convert(clipped, converted, output_crs)
-            
+
             # Generate COG from converted raster
             cog_gen = COGGenerator()
             output_path = Path(output)
@@ -362,7 +422,18 @@ def process(aoi, output, output_crs, ffrd, buffer, cellsize, no_snap, project_bo
     help="Path to AOI geometry",
 )
 def inspect(aoi: str) -> None:
-    """Inspect tiles for an AOI without downloading."""
+    """Inspect available tiles for an AOI without downloading them.
+
+    Parameters
+    ----------
+    aoi : str
+        Path to the AOI geometry file.
+
+    Returns
+    -------
+    None
+        This command prints a tile inspection summary to the CLI.
+    """
     try:
         # Load AOI
         aoi_obj = AOI.from_file(aoi)

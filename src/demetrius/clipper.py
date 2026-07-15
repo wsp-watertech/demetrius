@@ -22,28 +22,38 @@ class Clipper:
         geometry: BaseGeometry,
         geometry_crs: str = "EPSG:4326",
     ) -> Path:
-        """Clip raster to AOI geometry.
+        """Clip a raster to an AOI geometry.
 
         Uses gdalwarp with -cutline option for precise clipping.
         Geometry should be in WGS84 for gdalwarp to work correctly.
 
-        Args:
-            input_raster: Input raster path
-            output_raster: Output clipped raster path
-            geometry: Shapely geometry to clip to (should be in WGS84)
-            geometry_crs: CRS of the input geometry (should be "EPSG:4326")
+        Parameters
+        ----------
+        input_raster : Path
+            Input raster path.
+        output_raster : Path
+            Output clipped raster path.
+        geometry : BaseGeometry
+            Shapely geometry to clip to, typically in WGS84.
+        geometry_crs : str, default="EPSG:4326"
+            CRS of the input geometry.
 
-        Returns:
-            Path to clipped raster
+        Returns
+        -------
+        Path
+            Path to the clipped raster.
 
-        Raises:
-            RuntimeError: If clipping fails or gdalwarp is not available
+        Raises
+        ------
+        RuntimeError
+            If clipping fails or ``gdalwarp`` is not available.
         """
         logger.info(f"Clipping {input_raster} to AOI geometry")
 
         # If geometry is not in WGS84, reproject it
         if geometry_crs != "EPSG:4326":
             import geopandas as gpd
+
             gdf = gpd.GeoDataFrame([{"geometry": geometry}], crs=geometry_crs)
             gdf_wgs84 = gdf.to_crs("EPSG:4326")
             geometry = gdf_wgs84.iloc[0].geometry
@@ -90,18 +100,20 @@ class Clipper:
                 Path(geojson_path).unlink(missing_ok=True)
 
         except FileNotFoundError:
-            raise RuntimeError(
-                "gdalwarp not found. Please install GDAL command-line tools."
-            )
+            raise RuntimeError("gdalwarp not found. Please install GDAL command-line tools.")
 
     def _geometry_to_geojson(self, geometry: BaseGeometry) -> dict[str, Any]:
-        """Convert shapely geometry to GeoJSON FeatureCollection.
+        """Convert a shapely geometry to a GeoJSON feature collection.
 
-        Args:
-            geometry: Shapely geometry object
+        Parameters
+        ----------
+        geometry : BaseGeometry
+            Shapely geometry object.
 
-        Returns:
-            GeoJSON FeatureCollection
+        Returns
+        -------
+        dict[str, Any]
+            GeoJSON feature collection representation of the geometry.
         """
         from shapely.geometry import mapping
 

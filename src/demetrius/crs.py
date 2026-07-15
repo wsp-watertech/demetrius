@@ -12,11 +12,15 @@ logger = logging.getLogger(__name__)
 def extract_utm_zone(crs: Optional[str]) -> Optional[int]:
     """Extract UTM zone number from EPSG code.
 
-    Args:
-        crs: CRS string like "EPSG:32618"
+    Parameters
+    ----------
+    crs : str | None
+        CRS string such as ``"EPSG:32618"``.
 
-    Returns:
-        Zone number (1-60) or None if not UTM
+    Returns
+    -------
+    int | None
+        Zone number from 1 to 60, or ``None`` if the CRS is not UTM.
     """
     if not crs:
         return None
@@ -33,11 +37,15 @@ def detect_utm_zones_from_tiles(tiles: Sequence[Tile]) -> set[int]:
 
     This is a heuristic approach - in production, would use actual tile metadata.
 
-    Args:
-        tiles: Tiles to analyze
+    Parameters
+    ----------
+    tiles : Sequence[Tile]
+        Tiles to analyze.
 
-    Returns:
-        Set of UTM zone numbers (1-60)
+    Returns
+    -------
+    set[int]
+        UTM zone numbers from 1 to 60 represented by the tiles.
     """
     zones: set[int] = set()
 
@@ -60,11 +68,20 @@ def get_target_utm_for_tiles(tiles: Sequence[Tile]) -> str:
 
     If tiles span multiple UTM zones, selects the zone covering the most tiles.
 
-    Args:
-        tiles: Tiles to analyze
+    Parameters
+    ----------
+    tiles : Sequence[Tile]
+        Tiles to analyze.
 
-    Returns:
-        EPSG code for target UTM zone (e.g., "EPSG:32618")
+    Returns
+    -------
+    str
+        EPSG code for the target UTM zone, such as ``"EPSG:32618"``.
+
+    Raises
+    ------
+    ValueError
+        If no UTM zone can be determined from the tiles.
     """
     zones = detect_utm_zones_from_tiles(tiles)
 

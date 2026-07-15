@@ -14,9 +14,17 @@ class InspectionReport:
     def __init__(self, tiles: Sequence[Tile], aoi: AOI):
         """Create inspection report.
 
-        Args:
-            tiles: Discovered tiles
-            aoi: Area of Interest
+        Parameters
+        ----------
+        tiles : Sequence[Tile]
+            Discovered tiles.
+        aoi : AOI
+            Area of interest.
+
+        Returns
+        -------
+        None
+            Initializes the inspection report instance.
         """
         self.tiles = tiles
         self.aoi = aoi
@@ -24,8 +32,10 @@ class InspectionReport:
     def summary(self) -> str:
         """Generate human-readable summary.
 
-        Returns:
-            Formatted summary text
+        Returns
+        -------
+        str
+            Formatted summary text.
         """
         lines = [
             "=" * 70,
@@ -35,18 +45,22 @@ class InspectionReport:
 
         # AOI info
         bounds = self.aoi.bounds()
-        lines.extend([
-            f"\nArea of Interest:",
-            f"  Bounds: ({bounds.min_x:.4f}, {bounds.min_y:.4f}) → "
-            f"({bounds.max_x:.4f}, {bounds.max_y:.4f})",
-            f"  Buffer: {self.aoi.buffer} m",
-        ])
+        lines.extend(
+            [
+                f"\nArea of Interest:",
+                f"  Bounds: ({bounds.min_x:.4f}, {bounds.min_y:.4f}) → "
+                f"({bounds.max_x:.4f}, {bounds.max_y:.4f})",
+                f"  Buffer: {self.aoi.buffer} m",
+            ]
+        )
 
         # Tile summary
-        lines.extend([
-            f"\nTiles Discovered:",
-            f"  Total: {len(self.tiles)} tile(s)",
-        ])
+        lines.extend(
+            [
+                f"\nTiles Discovered:",
+                f"  Total: {len(self.tiles)} tile(s)",
+            ]
+        )
 
         if not self.tiles:
             lines.append("  (None found)")
@@ -59,11 +73,13 @@ class InspectionReport:
                 datasets[tile.dataset_id] = []
             datasets[tile.dataset_id].append(tile)
 
-        lines.extend([
-            f"  Datasets: {len(datasets)}",
-            f"",
-            "  Dataset Priority Order (newest first):",
-        ])
+        lines.extend(
+            [
+                f"  Datasets: {len(datasets)}",
+                f"",
+                "  Dataset Priority Order (newest first):",
+            ]
+        )
 
         for i, (dataset_id, ds_tiles) in enumerate(
             sorted(datasets.items(), key=lambda x: min(t.priority for t in x[1]))
@@ -72,17 +88,21 @@ class InspectionReport:
             earliest = min(pub_dates)
             latest = max(pub_dates)
 
-            lines.extend([
-                f"    [{i}] {dataset_id}",
-                f"        Tiles: {len(ds_tiles)}",
-                f"        Publication dates: {earliest.date()} → {latest.date()}",
-            ])
+            lines.extend(
+                [
+                    f"    [{i}] {dataset_id}",
+                    f"        Tiles: {len(ds_tiles)}",
+                    f"        Publication dates: {earliest.date()} → {latest.date()}",
+                ]
+            )
 
         # CRS distribution
-        lines.extend([
-            f"\nCoordinate Systems:",
-            "  All tiles are in EPSG:4326 (WGS84)",
-        ])
+        lines.extend(
+            [
+                f"\nCoordinate Systems:",
+                "  All tiles are in EPSG:4326 (WGS84)",
+            ]
+        )
 
         # Coverage estimate
         from .filtering import get_coverage_polygon
@@ -90,7 +110,7 @@ class InspectionReport:
         coverage = get_coverage_polygon(self.tiles)
         covered_area = coverage.area if coverage else 0
         aoi_area = self.aoi.geometry.area
-        
+
         # Calculate actual coverage of original (unbuffered) AOI
         aoi_geom = self.aoi.geometry
         if coverage:
@@ -104,17 +124,19 @@ class InspectionReport:
         if aoi_area > 0:
             # Raw tile area (with overlaps): sum of all individual tile areas
             raw_tile_area = sum(tile.bounds_wgs84.to_polygon().area for tile in self.tiles)
-            
+
             # Overlap factor: how many times are tiles redundantly covering the same area
             overlap_factor = (raw_tile_area / covered_area) if covered_area > 0 else 0
-            
-            lines.extend([
-                f"\nCoverage Estimate:",
-                f"  AOI area: {aoi_area:.2f} sq degrees",
-                f"  Actual AOI coverage: {aoi_coverage_area:.2f} sq degrees → {aoi_coverage_pct:.1f}% of AOI",
-                f"  Total tile extent (includes overhang): {covered_area:.2f} sq degrees",
-                f"  Dataset redundancy: {overlap_factor:.2f}x (minimal {(overlap_factor - 1) * 100:.0f}% overlap between datasets)",
-            ])
+
+            lines.extend(
+                [
+                    f"\nCoverage Estimate:",
+                    f"  AOI area: {aoi_area:.2f} sq degrees",
+                    f"  Actual AOI coverage: {aoi_coverage_area:.2f} sq degrees → {aoi_coverage_pct:.1f}% of AOI",
+                    f"  Total tile extent (includes overhang): {covered_area:.2f} sq degrees",
+                    f"  Dataset redundancy: {overlap_factor:.2f}x (minimal {(overlap_factor - 1) * 100:.0f}% overlap between datasets)",
+                ]
+            )
 
         lines.append("\n" + "=" * 70)
         return "\n".join(lines)

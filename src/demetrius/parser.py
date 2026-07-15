@@ -11,15 +11,22 @@ def parse_dataset_and_tile_ids(title: str, url: Optional[str] = None) -> tuple[s
                                     ^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
                                     tile_id  dataset_id
 
-    Args:
-        title: TNM product title
-        url: Download URL (fallback if title parsing fails)
+    Parameters
+    ----------
+    title : str
+        TNM product title.
+    url : str | None, optional
+        Download URL used as a fallback if title parsing fails.
 
-    Returns:
-        Tuple of (dataset_id, tile_id)
+    Returns
+    -------
+    tuple[str, str]
+        Extracted ``(dataset_id, tile_id)`` tuple.
 
-    Raises:
-        ValueError: If IDs cannot be extracted
+    Raises
+    ------
+    ValueError
+        If the identifiers cannot be extracted.
     """
     # Pattern: look for coordinates like x##y## (tile_id)
     # followed by alphabetic/underscore dataset identifier
@@ -48,9 +55,25 @@ def parse_dataset_and_tile_ids(title: str, url: Optional[str] = None) -> tuple[s
 def _parse_from_url(url: str) -> str:
     """Extract dataset_id from download URL as fallback.
 
-    Common patterns:
+    Notes
+    -----
     - https://cloud.sdsc.edu/v1/AUTH_.../DEM/.../<dataset_id>_<tile_id>.tif
     - https://tnmaccess.nationalmap.gov/.../DEM_<dataset_id>.tif
+
+    Parameters
+    ----------
+    url : str
+        Download URL to parse.
+
+    Returns
+    -------
+    str
+        Extracted dataset identifier.
+
+    Raises
+    ------
+    ValueError
+        If the dataset identifier cannot be extracted from the URL.
     """
     # Extract filename
     filename = url.split("/")[-1]

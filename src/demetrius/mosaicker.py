@@ -16,8 +16,15 @@ class VRTMosaicker:
     def __init__(self, working_dir: Path):
         """Initialize mosaicker.
 
-        Args:
-            working_dir: Directory for VRT files
+        Parameters
+        ----------
+        working_dir : Path
+            Directory for VRT files.
+
+        Returns
+        -------
+        None
+            Initializes the mosaicker instance.
         """
         self.working_dir = Path(working_dir)
         self.working_dir.mkdir(parents=True, exist_ok=True)
@@ -28,16 +35,24 @@ class VRTMosaicker:
         Uses gdalbuildvrt for efficient virtual mosaicking without
         loading data into memory.
 
-        Args:
-            dataset_id: Dataset identifier
-            tiles: Tiles in this dataset (all must have local_path set)
+        Parameters
+        ----------
+        dataset_id : str
+            Dataset identifier.
+        tiles : Sequence[Tile]
+            Tiles in this dataset. All must have ``local_path`` set.
 
-        Returns:
-            Path to created VRT file
+        Returns
+        -------
+        Path
+            Path to the created VRT file.
 
-        Raises:
-            ValueError: If VRT creation fails
-            RuntimeError: If gdalbuildvrt is not available
+        Raises
+        ------
+        ValueError
+            If VRT creation fails.
+        RuntimeError
+            If ``gdalbuildvrt`` is not available.
         """
         # Validate inputs
         if not tiles:
@@ -72,9 +87,7 @@ class VRTMosaicker:
             return vrt_path
 
         except FileNotFoundError:
-            raise RuntimeError(
-                "gdalbuildvrt not found. Please install GDAL command-line tools."
-            )
+            raise RuntimeError("gdalbuildvrt not found. Please install GDAL command-line tools.")
 
     def create_merged_vrt(
         self,
@@ -85,15 +98,24 @@ class VRTMosaicker:
 
         Creates a layered VRT that respects dataset priority (newer overwrites older).
 
-        Args:
-            dataset_vrts: Mapping of dataset_id to VRT file path
-            output_vrt: Path for merged VRT output
+        Parameters
+        ----------
+        dataset_vrts : dict[str, Path]
+            Mapping of ``dataset_id`` to VRT file path.
+        output_vrt : Path
+            Path for merged VRT output.
 
-        Returns:
-            Path to merged VRT
+        Returns
+        -------
+        Path
+            Path to the merged VRT.
 
-        Raises:
-            ValueError: If merge fails
+        Raises
+        ------
+        ValueError
+            If the merge fails.
+        RuntimeError
+            If ``gdalbuildvrt`` is not available.
         """
         if not dataset_vrts:
             raise ValueError("No dataset VRTs provided")
@@ -120,6 +142,4 @@ class VRTMosaicker:
             return output_vrt
 
         except FileNotFoundError:
-            raise RuntimeError(
-                "gdalbuildvrt not found. Please install GDAL command-line tools."
-            )
+            raise RuntimeError("gdalbuildvrt not found. Please install GDAL command-line tools.")

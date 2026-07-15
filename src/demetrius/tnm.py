@@ -21,8 +21,15 @@ class TNMTileSource(TileSource):
     def __init__(self, timeout: float = 30.0):
         """Initialize TNM client.
 
-        Args:
-            timeout: Request timeout in seconds
+        Parameters
+        ----------
+        timeout : float, default=30.0
+            Request timeout in seconds.
+
+        Returns
+        -------
+        None
+            Initializes the TNM tile source.
         """
         self.timeout = timeout
         self.client = httpx.Client(timeout=timeout)
@@ -32,14 +39,20 @@ class TNMTileSource(TileSource):
 
         Paginates through all results from TNM Access API (backed by ScienceBase).
 
-        Args:
-            aoi_bbox: Bounding box in EPSG:4326
+        Parameters
+        ----------
+        aoi_bbox : BoundingBox
+            Bounding box in EPSG:4326.
 
-        Returns:
-            List of Tile objects from TNM
+        Returns
+        -------
+        list[Tile]
+            Tile objects returned from TNM.
 
-        Raises:
-            ValueError: If TNM query fails
+        Raises
+        ------
+        ValueError
+            If the TNM query fails or returns invalid JSON.
         """
         logger.info(
             f"Querying TNM for tiles in bbox: {aoi_bbox.min_x}, {aoi_bbox.min_y}, "
@@ -98,14 +111,20 @@ class TNMTileSource(TileSource):
     def _parse_tnm_item(self, item: dict[str, Any]) -> Tile:
         """Parse a single TNM product item into Tile object.
 
-        Args:
-            item: TNM API response item
+        Parameters
+        ----------
+        item : dict[str, Any]
+            TNM API response item.
 
-        Returns:
-            Tile object
+        Returns
+        -------
+        Tile
+            Parsed tile object.
 
-        Raises:
-            ValueError: If required fields missing or invalid
+        Raises
+        ------
+        ValueError
+            If required fields are missing or invalid.
         """
         required_fields = ["title", "downloadURL", "publicationDate", "lastUpdated", "boundingBox"]
         for field in required_fields:
@@ -163,22 +182,35 @@ class TNMTileSource(TileSource):
         - "2021-11-22T17:32:57.123" (ISO with milliseconds)
         - "2022-05-24T23:02:12.343-06:00" (ISO8601 with timezone)
 
-        Args:
-            date_str: Date string from TNM
+        Parameters
+        ----------
+        date_str : str
+            Date string from TNM.
 
-        Returns:
-            Parsed datetime object (timezone removed)
+        Returns
+        -------
+        datetime
+            Parsed datetime object with timezone information removed.
+
+        Raises
+        ------
+        ValueError
+            If the date string cannot be parsed.
         """
         # Remove timezone info if present (anything after +/-)
         if "+" in date_str or date_str.count("-") > 2:
             # Has timezone offset like -06:00
-            date_str = date_str.split("+")[0].split("-")[0] if "+" in date_str else date_str.rsplit("-", 1)[0]
-        
+            date_str = (
+                date_str.split("+")[0].split("-")[0]
+                if "+" in date_str
+                else date_str.rsplit("-", 1)[0]
+            )
+
         # Try ISO format first (with or without time/milliseconds)
         for fmt in [
             "%Y-%m-%dT%H:%M:%S.%f",  # with milliseconds
-            "%Y-%m-%dT%H:%M:%S",     # without milliseconds
-            "%Y-%m-%d",              # date only
+            "%Y-%m-%dT%H:%M:%S",  # without milliseconds
+            "%Y-%m-%d",  # date only
         ]:
             try:
                 return datetime.strptime(date_str, fmt)
@@ -188,6 +220,12 @@ class TNMTileSource(TileSource):
         raise ValueError(f"Could not parse date: {date_str}")
 
     def __del__(self) -> None:
-        """Clean up HTTP client."""
+        """Clean up the HTTP client.
+
+        Returns
+        -------
+        None
+            Closes the HTTP client when the instance is destroyed.
+        """
         if hasattr(self, "client"):
             self.client.close()

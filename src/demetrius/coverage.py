@@ -26,17 +26,27 @@ def validate_coverage(
     Checks that the original (unbuffered) AOI has adequate coverage.
     Buffer gaps are allowed, but AOI gaps warrant warnings.
 
-    Args:
-        tiles: Selected tiles
-        aoi: Area of Interest
-        project_bounds: Optional project boundaries for coverage-aware validation
-        require_full_coverage: If True, raise error on gaps; if False, just warn
+    Parameters
+    ----------
+    tiles : Sequence[Tile]
+        Selected tiles.
+    aoi : AOI
+        Area of interest.
+    project_bounds : ProjectBoundaries | None, optional
+        Optional project boundaries for coverage-aware validation.
+    require_full_coverage : bool, default=False
+        If ``True``, raise an error on gaps; otherwise, only warn.
 
-    Returns:
-        Coverage report with 'is_complete' and 'coverage_percentage'
+    Returns
+    -------
+    dict[str, bool | float]
+        Coverage report containing completeness and coverage percentage
+        information.
 
-    Raises:
-        ValueError: If require_full_coverage=True and gaps exist
+    Raises
+    ------
+    ValueError
+        If ``require_full_coverage=True`` and gaps exist.
     """
     logger.info(f"Validating coverage for {len(tiles)} tiles")
 
@@ -100,10 +110,7 @@ def validate_coverage(
                 if is_complete
                 else (
                     (
-                        (
-                            original_aoi.area
-                            - original_aoi.difference(tile_coverage).area
-                        )
+                        (original_aoi.area - original_aoi.difference(tile_coverage).area)
                         / original_aoi.area
                         * 100
                     )

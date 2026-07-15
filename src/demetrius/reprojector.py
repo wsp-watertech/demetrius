@@ -24,19 +24,31 @@ class Reprojector:
         Uses gdalwarp for efficient reprojection with support for
         multi-threaded execution.
 
-        Args:
-            input_raster: Input raster path
-            output_raster: Output raster path
-            target_crs: Target CRS (e.g., "EPSG:32618")
-            resampling: Resampling method (bilinear, cubic, etc.)
-            cellsize: Output cellsize in target CRS units (optional)
+        Parameters
+        ----------
+        input_raster : Path
+            Input raster path.
+        output_raster : Path
+            Output raster path.
+        target_crs : str
+            Target CRS, such as ``"EPSG:32618"``.
+        resampling : str, default="bilinear"
+            Resampling method, such as ``bilinear`` or ``cubic``.
+        cellsize : float | None, optional
+            Output cell size in target CRS units.
 
-        Returns:
-            Path to reprojected raster
+        Returns
+        -------
+        Path
+            Path to the reprojected raster.
 
-        Raises:
-            ValueError: If resampling method is invalid or cellsize is invalid
-            RuntimeError: If gdalwarp fails or is not available
+        Raises
+        ------
+        ValueError
+            If the resampling method or cell size is invalid, or reprojection
+            fails.
+        RuntimeError
+            If ``gdalwarp`` is not available.
         """
         # Validate resampling method
         allowed_methods = ["bilinear", "cubic", "cubicspline", "lanczos"]
@@ -71,7 +83,7 @@ class Reprojector:
             # Add cellsize (target resolution) if specified
             # Round to 9 decimal places to avoid floating-point precision artifacts
             if cellsize is not None:
-                cellsize_str = f"{cellsize:.9f}".rstrip('0').rstrip('.')
+                cellsize_str = f"{cellsize:.9f}".rstrip("0").rstrip(".")
                 cmd.extend(["-tr", cellsize_str, cellsize_str])
 
             cmd.extend([str(input_raster), str(output_raster)])
@@ -90,6 +102,4 @@ class Reprojector:
             return output_raster
 
         except FileNotFoundError:
-            raise RuntimeError(
-                "gdalwarp not found. Please install GDAL command-line tools."
-            )
+            raise RuntimeError("gdalwarp not found. Please install GDAL command-line tools.")

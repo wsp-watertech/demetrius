@@ -266,9 +266,7 @@ class TestSnapper:
         snapper = Snapper()
 
         # Test snapping with cellsize 1.0
-        minx, miny, maxx, maxy = snapper.snap_bounds(
-            10.123, 20.456, 30.789, 40.999, cellsize=1.0
-        )
+        minx, miny, maxx, maxy = snapper.snap_bounds(10.123, 20.456, 30.789, 40.999, cellsize=1.0)
         assert minx == 10.0  # floor(10.123)
         assert miny == 20.0  # floor(20.456)
         assert maxx == 31.0  # ceil(30.789)
@@ -281,9 +279,7 @@ class TestSnapper:
         snapper = Snapper()
 
         # Test snapping with cellsize 0.5
-        minx, miny, maxx, maxy = snapper.snap_bounds(
-            10.1, 20.3, 30.7, 40.9, cellsize=0.5
-        )
+        minx, miny, maxx, maxy = snapper.snap_bounds(10.1, 20.3, 30.7, 40.9, cellsize=0.5)
         assert minx == 10.0  # floor(10.1 / 0.5) * 0.5
         assert miny == 20.0  # floor(20.3 / 0.5) * 0.5
         assert maxx == 31.0  # ceil(30.7 / 0.5) * 0.5
@@ -296,9 +292,7 @@ class TestSnapper:
         snapper = Snapper()
 
         # Test snapping with already-aligned bounds
-        minx, miny, maxx, maxy = snapper.snap_bounds(
-            10.0, 20.0, 30.0, 40.0, cellsize=1.0
-        )
+        minx, miny, maxx, maxy = snapper.snap_bounds(10.0, 20.0, 30.0, 40.0, cellsize=1.0)
         assert minx == 10.0
         assert miny == 20.0
         assert maxx == 30.0
@@ -377,4 +371,3 @@ class TestReprojector:
                 "EPSG:32618",
                 cellsize=0,
             )
-

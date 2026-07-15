@@ -25,49 +25,69 @@ Perfect for hydraulic modeling workflows where data integrity and reproducibilit
 pip install demetrius
 ```
 
-Or from source:
+Or install from source for development:
 
 ```bash
-git clone https://github.com/your/demetrius.git
+git clone https://github.com/demetrius-dem/demetrius.git
 cd demetrius
 pip install -e ".[dev]"
 ```
 
-### Requirements
+### System Requirements
 
-- Python 3.12+
-- GDAL command-line tools (`gdalbuildvrt`, `gdalwarp`, `gdal_translate`)
+- **Python**: 3.12 or higher
+- **GDAL**: Command-line tools (`gdalbuildvrt`, `gdalwarp`, `gdal_translate`)
+  - GDAL must be installed separately before installing demetrius
+  - The Python GDAL bindings are installed via pip as a dependency
 
-**macOS:**
+**Installation by Operating System:**
+
+**macOS (Homebrew):**
 ```bash
 brew install gdal
+pip install demetrius
 ```
 
 **Linux (Ubuntu/Debian):**
 ```bash
+sudo apt-get update
 sudo apt-get install gdal-bin
+pip install demetrius
 ```
 
-**Windows:**
-Download from [OSGeo4W](https://trac.osgeo.org/osgeo4w/) or use conda:
+**Windows (OSGeo4W):**
+1. Download [OSGeo4W installer](https://trac.osgeo.org/osgeo4w/)
+2. Select GDAL and Python 3.12 packages
+3. Then: `pip install demetrius`
+
+**Conda (any platform):**
 ```bash
-conda install gdal
+conda create -n demetrius python=3.12 gdal
+conda activate demetrius
+pip install demetrius
 ```
 
 ## Quick Start
 
 ### Basic Usage
 
+Process an AOI polygon and generate a DEM:
+
 ```bash
-demetrius process --aoi site.shp --output dem.tif
+demetrius process --aoi site.shp --output dem.tif --project-bounds boundaries.gpkg
 ```
 
-### Inspect Tiles
+Required arguments:
+- `--aoi`: Path to AOI geometry (shapefile, GeoJSON, or GeoPackage)
+- `--output`: Output raster path
+- `--project-bounds`: Path to project boundaries (shapefile, GeoPackage, etc.)
 
-Preview what tiles would be downloaded without downloading:
+### Preview Tiles (No Download)
+
+Inspect what tiles would be used without downloading:
 
 ```bash
-demetrius inspect --aoi site.shp
+demetrius inspect --aoi site.shp --project-bounds boundaries.gpkg
 ```
 
 Output:
@@ -96,6 +116,119 @@ Coverage Estimate:
 ======================================================================
 ```
 
+## Using demetrius as a Python Library
+
+Beyond the CLI, you can use demetrius directly in Python scripts:
+
+### Basic Example
+
+```python
+from pathlib import Path
+from demetrius.models import AOI
+from demetrius.project_boundaries import ProjectBoundaries
+from demetrius.tnm import TNMTileSource
+from demetrius.filtering import filter_tiles_by_aoi
+from demetrius.priority import prioritize_datasets
+from demetrius.downloader import TileDownloader
+from demetrius.mosaicker import VRTMosaicker
+from demetrius.merger import DatasetMerger
+from demetrius.reprojector import Reprojector
+from demetrius.snapper import Snapper
+from demetrius.clipper import Clipper
+from demetrius.elevation_converter import ElevationConverter
+from demetrius.cog import COGGenerator
+
+# Load AOI and project boundaries
+aoi = AOI.from_file("site.shp")
+proj_bounds = ProjectBoundaries.from_file("boundaries.gpkg")
+
+# Query TNM for tiles
+source = TNMTileSource()
+tiles = source.search(aoi.bounds())
+
+# Filter and prioritize
+tiles = filter_tiles_by_aoi(tiles, aoi, proj_bounds)
+tiles = prioritize_datasets(tiles)
+
+# Download
+downloader = TileDownloader()
+for tile in tiles:
+    downloader.download_tile(tile)
+
+# Mosaic & merge datasets
+mosaicker = VRTMosaicker()
+mosaic = mosaicker.create_mosaic_vrt(tiles)
+
+merger = DatasetMerger()
+merged = merger.merge(mosaic)
+
+# Reproject & snap
+reprojector = Reprojector()
+snapper = Snapper()
+output_crs = "EPSG:32111"
+cellsize = 1.0
+
+reprojected = reprojector.reproject(merged, output_crs, cellsize=cellsize)
+snapped = snapper.snap(reprojected, cellsize=cellsize)
+
+# Clip to AOI
+clipper = Clipper()
+clipped = clipper.clip(snapped, aoi)
+
+# Convert units & generate COG
+converter = ElevationConverter()
+converted = converter.convert(clipped, "converted.tif", output_crs)
+
+cog_gen = COGGenerator()
+cog_gen.generate(converted, "dem.tif")
+```
+
+### Accessing Cached Data
+
+Downloaded tiles are cached in `~/.demetrius/`:
+
+```python
+from demetrius.downloader import TileDownloader
+
+# Get cache directory
+cache_dir = TileDownloader.get_default_data_dir()
+print(f"Tiles cached in: {cache_dir}")
+
+# List downloaded tiles
+for tile_file in cache_dir.glob("**/*.tif"):
+    print(tile_file)
+```
+
+### Inspect Workflow Without Downloading
+
+```python
+from demetrius.inspector import InspectionReport
+
+# Preview tiles that would be downloaded
+report = InspectionReport.from_aoi_and_bounds("site.shp", "boundaries.gpkg")
+print(report)
+# Shows tiles, datasets, coverage %
+```
+
+### Working with Manifests
+
+Manifests track tile provenance for reproducibility:
+
+```python
+from demetrius.manifest import Manifest
+
+# Load manifest from previous run
+manifest = Manifest.load("dem.tif.manifest.json")
+
+# Access tile information
+print(f"Tiles used: {len(manifest.tiles)}")
+print(f"Buffer distance: {manifest.buffer} m")
+print(f"Output CRS: {manifest.output_crs}")
+
+# Inspect original AOI geometry
+print(manifest.aoi.bounds())
+```
+
 ## Processing Modes
 
 ### Full Pipeline (default)
@@ -112,7 +245,7 @@ Stop after downloading tiles; saves manifest for later processing
 demetrius process --aoi site.shp --mode download-only
 ```
 
-Outputs: `manifest.json` and tiles in `~/.demetrius_data/`
+Outputs: `dem.tif.manifest.json` and tiles in `~/.demetrius/`
 
 ### Process Only
 Use previously downloaded tiles; skip TNM query and download
@@ -121,7 +254,7 @@ Use previously downloaded tiles; skip TNM query and download
 demetrius process --aoi site.shp --mode process-only
 ```
 
-Requires manifest from previous `download-only` run.
+Requires manifest from previous `download-only` run (named `{output}.manifest.json`).
 
 ## Options
 
@@ -194,7 +327,7 @@ JSON file recording all inputs and selected tiles for reproducibility:
       "priority": 0,
       "url": "https://...",
       "bounds": {...},
-      "local_path": "/home/user/.demetrius_data/dataset_PA_3/tile_x38y448.tif"
+      "local_path": "/home/user/.demetrius/dataset_PA_3/tile_x38y448.tif"
     },
     ...
   ]
@@ -310,14 +443,6 @@ gdal_translate -of COG -co COMPRESS=DEFLATE ...
 
 ## Examples
 
-### Statewide DEM with Auto-CRS
-
-```bash
-demetrius process \
-  --aoi pennsylvania.shp \
-  --output pa_dem.tif
-```
-
 ### Multi-county with Specific CRS
 
 ```bash
@@ -361,143 +486,12 @@ Both commands snap to the equivalent of 1 meter, but in their respective CRS uni
 
 **Stage 1: Discovery & Download (on server with network)**
 ```bash
-demetrius process --aoi site.shp --mode download-only
-# Output: manifest.json, ~/.demetrius_data/
+demetrius process --aoi site.shp --mode download-only --output dem.tif --project-bounds boundaries.gpkg
+# Output: dem.tif.manifest.json, ~/.demetrius/
 ```
 
 **Stage 2: Processing (offline or different machine)**
 ```bash
-# Copy manifest and tiles to processing machine
-demetrius process --aoi site.shp --mode process-only --output dem.tif
+# Copy dem.tif.manifest.json and tiles to processing machine
+demetrius process --aoi site.shp --mode process-only --output dem.tif --project-bounds boundaries.gpkg
 ```
-
-## Troubleshooting
-
-### "gdalbuildvrt not found"
-
-GDAL command-line tools not installed or not in PATH.
-
-**Solution**: Install GDAL (see Installation section)
-
-### "AOI has uncovered areas"
-
-Tiles don't fully cover the requested area. Options:
-
-1. Increase `--buffer-distance` to pull more tiles
-2. Use `--require-full-coverage=false` to proceed anyway
-3. Check for data gaps in that region
-
-### "Failed to download tile after 3 attempts"
-
-Network error or TNM API issue. Check:
-
-1. Internet connection
-2. TNM API status: https://tnmaccess.nationalmap.gov/
-3. Disk space for downloads
-
-### Memory errors with large AOIs
-
-This shouldn't happen - demetrius uses file-backed GDAL operations, not in-memory rasters. If it does:
-
-1. Check available disk space for working directory
-2. Reduce AOI size if > 100,000 sq km
-3. Report as bug with AOI bounds
-
-## Design Decisions
-
-### Why VRTs instead of merged rasters?
-
-VRTs (Virtual Raster) are memory-efficient XML files that reference tile files without duplicating pixel data. This allows demetrius to handle hundreds or thousands of tiles without loading any into RAM.
-
-### Why strict priority overwrite (no blending)?
-
-Data integrity. In hydraulic modeling, a single blended value from two DEMs introduces unknown uncertainty. We use newest data completely, avoiding statistical mixing.
-
-### Why require full coverage?
-
-Partial coverage hides data gaps that would silently propagate to analysis results. Better to fail loudly so users can address the gap explicitly.
-
-## Architecture
-
-```
-User Input (AOI)
-    ↓
-[TNM Discovery] → Query USGS API
-    ↓
-[Tile Filtering] → Intersect buffered AOI
-    ↓
-[Prioritization] → Sort by publication date
-    ↓
-[Coverage Check] → Validate original AOI covered
-    ↓
-[Parallel Download] → Get tiles from TNM
-    ↓
-[VRT Mosaicking] → Per-dataset VRTs
-    ↓
-[Dataset Merge] → Priority-based overwrite
-    ↓
-[Reprojection] → gdalwarp to target CRS
-    ↓
-[Clipping] → Remove buffer, keep only AOI
-    ↓
-[COG Generation] → Final cloud-optimized GeoTIFF
-    ↓
-Output (dem.tif) + Manifest (manifest.json)
-```
-
-## Development
-
-```bash
-# Clone and install in editable mode
-git clone <repo>
-cd demetrius
-pip install -e ".[dev]"
-
-# Run tests
-pytest tests/ -v
-
-# Run linters
-black src tests
-mypy src
-ruff check src
-
-# Build documentation
-sphinx-build -b html docs docs/_build
-```
-
-## Future Enhancements
-
-- **Seamless 1m (S1M)** integration for national coverage
-- **STAC-based** discovery for cloud-native data
-- **Cloud-native COG** streaming (no local download)
-- **Parallel processing** with Dask for multi-node scaling
-- **Hydroconditioning** for hydraulic model integration
-- **Vertical datum transforms** (NAVD88 ↔ ellipsoid)
-- **Bathymetry** integration (water surface elevation)
-
-## License
-
-MIT License - See LICENSE file
-
-## Citation
-
-If you use demetrius in research, please cite:
-
-```bibtex
-@software{demetrius,
-  title={demetrius: High-Resolution DEM Assembly from USGS 3DEP},
-  author={Your Name},
-  year={2024},
-  url={https://github.com/your/demetrius}
-}
-```
-
-## Support
-
-- **Issues**: GitHub Issues
-- **Documentation**: https://demetrius.readthedocs.io
-- **Community**: GitHub Discussions
-
-## Contributing
-
-Contributions welcome! See CONTRIBUTING.md for guidelines.

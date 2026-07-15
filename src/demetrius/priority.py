@@ -21,11 +21,15 @@ def prioritize_datasets(tiles: Sequence[Tile]) -> list[Tile]:
     Instead, all tiles are kept and allowed to overlap. The mosaic step
     will resolve overlaps by selecting the most recent non-nodata value.
 
-    Args:
-        tiles: Raw tiles from TNM
+    Parameters
+    ----------
+    tiles : Sequence[Tile]
+        Raw tiles from TNM.
 
-    Returns:
-        All tiles with priority assigned (no deduplication)
+    Returns
+    -------
+    list[Tile]
+        All tiles with priority assigned, without deduplication.
     """
     logger.info(f"Prioritizing datasets among {len(tiles)} tiles")
 
@@ -48,23 +52,28 @@ def prioritize_datasets(tiles: Sequence[Tile]) -> list[Tile]:
         for tile in datasets[dataset_id]:
             tile.priority = priority
             result.append(tile)
-            logger.debug(f"Assigned priority {priority} to tile {tile.tile_id} (dataset {dataset_id})")
+            logger.debug(
+                f"Assigned priority {priority} to tile {tile.tile_id} (dataset {dataset_id})"
+            )
 
     logger.info(f"Total tiles: {len(result)} (including overlapping tiles from different datasets)")
     return result
 
 
-def _sort_datasets_by_priority(
-    dataset_ids: list[str], all_tiles: Sequence[Tile]
-) -> list[str]:
+def _sort_datasets_by_priority(dataset_ids: list[str], all_tiles: Sequence[Tile]) -> list[str]:
     """Sort dataset IDs by recency (newest first).
 
-    Args:
-        dataset_ids: List of unique dataset identifiers
-        all_tiles: All tiles to search for metadata
+    Parameters
+    ----------
+    dataset_ids : list[str]
+        Unique dataset identifiers.
+    all_tiles : Sequence[Tile]
+        All tiles used to look up dataset metadata.
 
-    Returns:
-        Sorted list of dataset IDs (newest first)
+    Returns
+    -------
+    list[str]
+        Sorted dataset identifiers in priority order.
     """
     dataset_metadata: dict[str, tuple[datetime, datetime]] = {}
 

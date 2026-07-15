@@ -17,13 +17,19 @@ class TileSource(ABC):
     def search(self, aoi_bbox: BoundingBox) -> list[Tile]:
         """Search for tiles intersecting the given bounding box.
 
-        Args:
-            aoi_bbox: Bounding box to search (EPSG:4326)
+        Parameters
+        ----------
+        aoi_bbox : BoundingBox
+            Bounding box to search in EPSG:4326.
 
-        Returns:
-            List of Tile objects found in the bbox
+        Returns
+        -------
+        list[Tile]
+            Tile objects found in the bounding box.
 
-        Raises:
-            ValueError: If search fails or returns invalid data
+        Raises
+        ------
+        ValueError
+            If the search fails or returns invalid data.
         """
         pass

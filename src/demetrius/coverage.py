@@ -3,8 +3,6 @@
 import logging
 from typing import Optional, Sequence
 
-from shapely.geometry import Polygon
-
 from .filtering import get_coverage_polygon
 from .models import AOI, Tile
 from .project_boundaries import ProjectBoundaries
@@ -55,7 +53,6 @@ def validate_coverage(
 
     if project_bounds is not None:
         # Use actual project coverage instead of tile bboxes
-        project_coverage = project_bounds.get_coverage_for_geometry(original_aoi)
         coverage_fraction = project_bounds.coverage_fraction(original_aoi)
         is_complete = project_bounds.covers_geometry(original_aoi, min_coverage=0.95)
 

@@ -1,14 +1,13 @@
 """Command-line interface for demetrius."""
 
 import logging
-from pathlib import Path
-from collections import defaultdict
 import tempfile
+from collections import defaultdict
+from pathlib import Path
 
 import click
 
 from .coverage import validate_coverage
-from .downloader import TileDownloader
 from .elevation_converter import ElevationConverter
 from .filtering import filter_tiles_by_aoi
 from .inspector import InspectionReport
@@ -16,7 +15,6 @@ from .manifest import Manifest
 from .models import AOI, BoundingBox
 from .priority import prioritize_datasets
 from .tnm import TNMTileSource
-from .crs import get_target_utm_for_tiles
 
 logging.basicConfig(
     level=logging.INFO,
@@ -148,8 +146,6 @@ def process(
         from .project_boundaries import ProjectBoundaries
         from .snapper import Snapper
         from .projections import get_projection_file
-        import tempfile
-        from collections import defaultdict
 
         # Handle --ffrd flag
         if ffrd:
@@ -165,7 +161,7 @@ def process(
                 raise ValueError("FFRD projection file is empty")
 
             output_crs = ffrd_wkt
-            click.echo(f"Using FFRD custom projection")
+            click.echo("Using FFRD custom projection")
 
             # Force snapping when using --ffrd
             if no_snap:
@@ -180,12 +176,12 @@ def process(
         # Load project boundaries
         click.echo(f"Loading project boundaries from {project_bounds}")
         proj_bounds = ProjectBoundaries.from_file(project_bounds)
-        click.echo(f"✓ Loaded project boundaries")
+        click.echo("✓ Loaded project boundaries")
 
         # Load AOI
         click.echo(f"Loading AOI from {aoi}")
         aoi_obj = AOI.from_file(aoi, buffer=buffer)
-        click.echo(f"✓ Loaded AOI")
+        click.echo("✓ Loaded AOI")
 
         # Determine target CRS early (needed for buffering and cellsize conversion)
         if not output_crs:
@@ -317,7 +313,7 @@ def process(
             downloaded_tiles = prioritized_tiles
 
         # Step 3: Create VRTs and mosaic
-        click.echo(f"\n[3/5] Mosaicking tiles...")
+        click.echo("\n[3/5] Mosaicking tiles...")
         with tempfile.TemporaryDirectory() as tmpdir:
             mosaicker = VRTMosaicker(Path(tmpdir))
 
@@ -345,7 +341,7 @@ def process(
                 )
 
             # Step 4: Reproject (if needed) and clip
-            click.echo(f"\n[4/5] Reprojecting and clipping...")
+            click.echo("\n[4/5] Reprojecting and clipping...")
 
             # Reproject
             reprojector = Reprojector()
@@ -375,11 +371,11 @@ def process(
                 clipping_geometry_wgs84,
                 geometry_crs="EPSG:4326",
             )
-            click.echo(f"✓ Reprojected and clipped")
+            click.echo("✓ Reprojected and clipped")
 
             # Step 5: Snap to grid (optional)
             if not no_snap:
-                click.echo(f"\n[5/5] Snapping to grid and converting elevation units...")
+                click.echo("\n[5/5] Snapping to grid and converting elevation units...")
 
                 snapped = Path(tmpdir) / "snapped.tif"
                 # Use effective_cellsize which is 1m converted to output_crs units
@@ -391,7 +387,7 @@ def process(
                 clipped = snapped
             else:
                 click.echo(
-                    f"\n[5/5] Converting elevation units and generating Cloud-Optimized GeoTIFF..."
+                    "\n[5/5] Converting elevation units and generating Cloud-Optimized GeoTIFF..."
                 )
 
             # Convert elevation units if necessary
@@ -405,9 +401,9 @@ def process(
             output_path.parent.mkdir(parents=True, exist_ok=True)
             cog_gen.generate(converted, output_path)
 
-        click.echo(f"\n" + "=" * 70)
+        click.echo("\n" + "=" * 70)
         click.echo(f"✓ SUCCESS! DEM saved to: {output_path}")
-        click.echo(f"=" * 70)
+        click.echo("=" * 70)
 
     except Exception as e:
         click.echo(f"\n✗ Error: {e}", err=True)
@@ -455,7 +451,7 @@ def inspect(aoi: str) -> None:
 
         # Validate coverage
         click.echo("Validating coverage...")
-        coverage = validate_coverage(
+        validate_coverage(
             prioritized_tiles,
             aoi_obj,
             require_full_coverage=False,

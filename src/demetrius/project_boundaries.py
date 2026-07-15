@@ -4,7 +4,6 @@ import logging
 from pathlib import Path
 
 import geopandas as gpd
-from shapely.geometry import Polygon
 from shapely.geometry.base import BaseGeometry
 
 logger = logging.getLogger(__name__)

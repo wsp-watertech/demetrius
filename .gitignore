@@ -1,4 +1,5 @@
 *.parquet
+*.tif
 
 # Created by https://www.toptal.com/developers/gitignore/api/python,vim,linux
 # Edit at https://www.toptal.com/developers/gitignore?templates=python,vim,linux

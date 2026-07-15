@@ -22,15 +22,20 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
 
-    - name: Install GDAL dependencies
+    - name: Install GDAL system libraries
       run: |
         sudo apt-get update
         sudo apt-get install -y gdal-bin libgdal-dev
-        export CPLUS_INCLUDE_PATH=/usr/include/gdal
-        export C_INCLUDE_PATH=/usr/include/gdal
-    
+        echo "CPLUS_INCLUDE_PATH=/usr/include/gdal" >> "$GITHUB_ENV"
+        echo "C_INCLUDE_PATH=/usr/include/gdal" >> "$GITHUB_ENV"
+        echo "GDAL_VERSION=$(gdal-config --version)" >> "$GITHUB_ENV"
+
     - name: Install dependencies
       run: |
+        # Pin the GDAL Python bindings to the exact system libgdal version
+        # (the bindings require an exact match, but pyproject.toml only
+        # specifies a lower bound so the resolver would otherwise grab latest).
+        pip install "gdal==${GDAL_VERSION}"
         pip install -e ".[dev]"
     
     - name: Lint with ruff

@@ -47,7 +47,7 @@ class InspectionReport:
         bounds = self.aoi.bounds()
         lines.extend(
             [
-                f"\nArea of Interest:",
+                "\nArea of Interest:",
                 f"  Bounds: ({bounds.min_x:.4f}, {bounds.min_y:.4f}) → "
                 f"({bounds.max_x:.4f}, {bounds.max_y:.4f})",
                 f"  Buffer: {self.aoi.buffer} m",
@@ -57,7 +57,7 @@ class InspectionReport:
         # Tile summary
         lines.extend(
             [
-                f"\nTiles Discovered:",
+                "\nTiles Discovered:",
                 f"  Total: {len(self.tiles)} tile(s)",
             ]
         )
@@ -76,7 +76,7 @@ class InspectionReport:
         lines.extend(
             [
                 f"  Datasets: {len(datasets)}",
-                f"",
+                "",
                 "  Dataset Priority Order (newest first):",
             ]
         )
@@ -99,7 +99,7 @@ class InspectionReport:
         # CRS distribution
         lines.extend(
             [
-                f"\nCoordinate Systems:",
+                "\nCoordinate Systems:",
                 "  All tiles are in EPSG:4326 (WGS84)",
             ]
         )
@@ -130,7 +130,7 @@ class InspectionReport:
 
             lines.extend(
                 [
-                    f"\nCoverage Estimate:",
+                    "\nCoverage Estimate:",
                     f"  AOI area: {aoi_area:.2f} sq degrees",
                     f"  Actual AOI coverage: {aoi_coverage_area:.2f} sq degrees → {aoi_coverage_pct:.1f}% of AOI",
                     f"  Total tile extent (includes overhang): {covered_area:.2f} sq degrees",

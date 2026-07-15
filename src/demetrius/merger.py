@@ -2,6 +2,7 @@
 
 import logging
 import subprocess
+import tempfile
 from collections import defaultdict
 from pathlib import Path
 from typing import Optional, Sequence

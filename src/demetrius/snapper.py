@@ -128,7 +128,6 @@ class Snapper:
 
             # Parse upper-left corner and pixel size
             bounds = None
-            pixel_size = None
 
             for line in result.stdout.split("\n"):
                 if line.startswith("Upper Left"):
@@ -158,7 +157,8 @@ class Snapper:
 
                     match = re.search(r"\(\s*([-\d.]+),\s*([-\d.]+)\)", line)
                     if match:
-                        pixel_size = (float(match.group(1)), float(match.group(2)))
+                        # Note: pixel size parsed but bounds comes from UpperLeft
+                        pass
 
             if bounds and len(bounds) == 4:
                 minx, miny, maxx, maxy = bounds

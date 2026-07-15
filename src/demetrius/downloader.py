@@ -1,6 +1,5 @@
 """Parallel tile downloading with integrity checks."""
 
-import hashlib
 import logging
 import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed

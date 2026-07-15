@@ -256,6 +256,46 @@ demetrius process --aoi site.shp --mode process-only
 
 Requires manifest from previous `download-only` run (named `{output}.manifest.json`).
 
+### Batch Processing Multiple Areas
+Process multiple polygons from a vector file by looping through features. No new functionality needed—just iterate and process each polygon separately:
+
+```python
+import geopandas as gpd
+from src.demetrius.cli import process
+from pathlib import Path
+
+# Load polygons from GeoPackage, Shapefile, GeoJSON, etc.
+polygons = gpd.read_file("study_areas.gpkg")
+
+output_dir = Path("./output_dems")
+output_dir.mkdir(exist_ok=True)
+
+for idx, row in polygons.iterrows():
+    aoi_name = row.get("name", f"area_{idx}")
+    
+    # Create temporary GeoJSON for this feature
+    feature_path = output_dir / f"{aoi_name}_aoi.geojson"
+    gpd.GeoDataFrame([row], crs=polygons.crs).to_file(feature_path, driver="GeoJSON")
+    
+    # Process this feature
+    output_dem = output_dir / f"{aoi_name}_dem.tif"
+    process(
+        aoi=str(feature_path),
+        output=str(output_dem),
+        output_crs="EPSG:32111",
+        buffer=500,
+        cellsize=1.0
+    )
+    
+    # Manifest saved as {output}.manifest.json for reproducibility
+    print(f"✓ Generated {output_dem} with metadata in {output_dem}.manifest.json")
+    
+    # Clean up temporary feature file
+    feature_path.unlink()
+```
+
+Each DEM gets its own manifest file (`{name}_dem.tif.manifest.json`) recording tiles, buffer, cellsize, and other parameters for reproducibility.
+
 ## Options
 
 ```

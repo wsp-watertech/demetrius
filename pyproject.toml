@@ -1,6 +1,10 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "demetrius"
-version = "0.1.0a1"
+version = "0.1.0a2"
 description = "High-resolution DEM assembly from USGS 3DEP data for engineering applications"
 readme = "README.md"
 license = {text = "MIT"}
@@ -53,3 +57,13 @@ target-version = "py312"
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/demetrius"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src/demetrius",
+    "/README.md",
+    "/LICENSE",
+]

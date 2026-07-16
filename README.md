@@ -2,6 +2,10 @@
 
 High-resolution DEM assembly from USGS 3DEP data for engineering applications.
 
+```bash
+demetrius process --aoi watershed.shp --project-bounds boundaries.gpkg --output dem.tif 
+```
+
 **demetrius** is a Python library and CLI tool that:
 - Accepts a polygon Area of Interest (AOI)
 - Queries the USGS TNM Access API for 3DEP 1m DEM tiles
@@ -10,14 +14,6 @@ High-resolution DEM assembly from USGS 3DEP data for engineering applications.
 - Mosaics them into a single Cloud-Optimized GeoTIFF (COG)
 
 Perfect for hydraulic modeling workflows where data integrity and reproducibility are critical.
-
-## Design Principles
-
-- **Accuracy over convenience** – no resampled or inferred data
-- **Deterministic output** – same inputs produce identical outputs
-- **Tile-first architecture** – operate at tile level
-- **Reproducibility** – full provenance via manifest files
-- **Extensibility** – pluggable tile sources (TNM now, S1M/STAC later)
 
 ## Installation
 
@@ -33,39 +29,17 @@ cd demetrius
 pip install -e ".[dev]"
 ```
 
-### System Requirements
-
-- **Python**: 3.12 or higher
-- **GDAL**: Command-line tools (`gdalbuildvrt`, `gdalwarp`, `gdal_translate`)
-  - GDAL must be installed separately before installing demetrius
-  - The Python GDAL bindings are installed via pip as a dependency
-
-**Installation by Operating System:**
-
-**macOS (Homebrew):**
-```bash
-brew install gdal
-pip install demetrius
-```
-
-**Linux (Ubuntu/Debian):**
-```bash
-sudo apt-get update
-sudo apt-get install gdal-bin
-pip install demetrius
-```
-
-**Windows (OSGeo4W):**
-1. Download [OSGeo4W installer](https://trac.osgeo.org/osgeo4w/)
-2. Select GDAL and Python 3.12 packages
-3. Then: `pip install demetrius`
-
-**Conda (any platform):**
+**Installation with Conda (recommended):**
 ```bash
 conda create -n demetrius python=3.12 gdal
 conda activate demetrius
 pip install demetrius
 ```
+
+### System Requirements
+
+- **Python**: 3.12 or higher
+- **GDAL**: Command-line tools (`gdalbuildvrt`, `gdalwarp`, `gdal_translate`)
 
 ## Quick Start
 

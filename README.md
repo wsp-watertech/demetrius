@@ -24,7 +24,7 @@ pip install demetrius
 Or install from source for development:
 
 ```bash
-git clone https://github.com/demetrius-dem/demetrius.git
+git clone https://github.com/wsp-watertech/demetrius.git
 cd demetrius
 pip install -e ".[dev]"
 ```

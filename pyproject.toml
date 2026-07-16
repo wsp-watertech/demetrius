@@ -1,10 +1,6 @@
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
 [project]
 name = "demetrius"
-version = "0.1.0"
+version = "0.1.0a1"
 description = "High-resolution DEM assembly from USGS 3DEP data for engineering applications"
 readme = "README.md"
 license = {text = "MIT"}
@@ -12,7 +8,7 @@ authors = [{name = "Thomas Williams", email = "thomas.williams@wsp.com"}]
 requires-python = ">=3.12"
 keywords = ["dem", "usgs", "3dep", "elevation", "hydraulic-modeling", "gis"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Science/Research",
     "Intended Audience :: Developers",
@@ -21,6 +17,8 @@ classifiers = [
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: GIS",
 ]
 dependencies = [
@@ -49,18 +47,9 @@ dev = [
     "ruff>=0.1",
 ]
 
-[tool.mypy]
-python_version = "3.12"
-strict = true
-
 [tool.ruff]
 line-length = 100
 target-version = "py312"
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/demetrius"]
-
-[tool.hatch.build.targets.sdist]
-include = [
-    "/src/demetrius/data",
-]
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"

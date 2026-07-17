@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from .models import Tile
+from .mosaicker import materialize_vrt
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,13 @@ class DatasetMerger:
             else:
                 dataset_raster = self._prepare_dataset(dataset_id, dataset_tiles)
 
+            # Flatten multi-tile VRTs into a single materialized GeoTIFF before
+            # using them in the merge chain (as either the running base raster
+            # or as a gdalwarp overlay source). Without this, gdalwarp has to
+            # resolve reads against every underlying tile file each time a
+            # many-tile VRT is touched, which gets slow with 100+ tiles.
+            dataset_raster = self._materialize(dataset_raster, dataset_id)
+
             if i == 0:
                 # First dataset - just use it directly
                 current_raster = dataset_raster
@@ -112,6 +120,42 @@ class DatasetMerger:
 
         logger.info(f"Merging complete: {current_raster}")
         return current_raster
+
+    def _materialize(self, dataset_raster: Path, dataset_id: str) -> Path:
+        """Flatten a VRT into a single materialized GeoTIFF, if needed.
+
+        Multi-tile VRTs are cheap to build but expensive to read repeatedly:
+        every block read must resolve and open whichever underlying tile
+        file(s) intersect that block. When such a VRT is fed into
+        ``gdalwarp`` (as either the running merge base or an overlay), that
+        cost is paid across the VRT's full extent. Materializing once, up
+        front, turns later reads into a single well-organized file instead
+        of many small ones.
+
+        Parameters
+        ----------
+        dataset_raster : Path
+            Path to the dataset's raster, either a ``.vrt`` mosaic of many
+            tiles or a single tile file.
+        dataset_id : str
+            Dataset identifier, used to name the materialized output.
+
+        Returns
+        -------
+        Path
+            Path to a materialized (non-VRT) raster. If ``dataset_raster``
+            was already a real raster file (e.g. a single tile), it is
+            returned unchanged.
+
+        Raises
+        ------
+        ValueError
+            If materialization fails.
+        RuntimeError
+            If ``gdal_translate`` is not available.
+        """
+        flat_path = self.working_dir / f"dataset_{dataset_id}_flat.tif"
+        return materialize_vrt(dataset_raster, flat_path)
 
     def _prepare_dataset(self, dataset_id: str, tiles: Sequence[Tile]) -> Path:
         """Prepare dataset for merging (VRT of all tiles or single tile).

@@ -129,7 +129,7 @@ def run_pipeline(
         from .filtering import filter_tiles_by_aoi
         from .manifest import Manifest
         from .merger import DatasetMerger
-        from .mosaicker import VRTMosaicker, materialize_vrt
+        from .mosaicker import VRTMosaicker
         from .priority import prioritize_datasets
         from .projections import get_projection_file
         from .reprojector import Reprojector
@@ -310,14 +310,7 @@ def run_pipeline(
 
             _report("Merging datasets...")
             if len(dataset_vrts) == 1:
-                only_dataset_id, only_vrt = next(iter(dataset_vrts.items()))
-                # Flatten a many-tile VRT into a single GeoTIFF here too, since
-                # skipping DatasetMerger means it would otherwise pass straight
-                # into Reprojector unmaterialized, forcing gdalwarp to resolve
-                # reads against every underlying tile during reprojection.
-                merged_raster = materialize_vrt(
-                    only_vrt, Path(tmpdir) / f"dataset_{only_dataset_id}_flat.tif"
-                )
+                merged_raster = list(dataset_vrts.values())[0]
             else:
                 merger = DatasetMerger(Path(tmpdir))
                 merged_raster = merger.merge_datasets(

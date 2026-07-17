@@ -1,6 +1,7 @@
 """TNM Access API client for querying USGS 3DEP tiles."""
 
 import logging
+import time
 from datetime import datetime
 from typing import Any
 
@@ -13,6 +14,10 @@ from .sources import TileSource
 logger = logging.getLogger(__name__)
 
 TNM_API_BASE = "https://tnmaccess.nationalmap.gov/api/v1/products"
+MAX_RETRIES = 5
+INITIAL_BACKOFF = 1.0  # seconds
+MAX_BACKOFF = 60.0  # seconds
+DEFAULT_PAGE_SIZE = 25  # Reduced from 50 for more resilient requests
 
 
 class TNMTileSource(TileSource):
@@ -38,6 +43,7 @@ class TNMTileSource(TileSource):
         """Search TNM for tiles intersecting bounding box.
 
         Paginates through all results from TNM Access API (backed by ScienceBase).
+        Retries with exponential backoff on 5xx errors (server errors).
 
         Parameters
         ----------
@@ -52,7 +58,7 @@ class TNMTileSource(TileSource):
         Raises
         ------
         ValueError
-            If the TNM query fails or returns invalid JSON.
+            If the TNM query fails after max retries or returns invalid JSON.
         """
         logger.info(
             f"Querying TNM for tiles in bbox: {aoi_bbox.min_x}, {aoi_bbox.min_y}, "
@@ -61,7 +67,7 @@ class TNMTileSource(TileSource):
 
         tiles = []
         offset = 0
-        page_size = 50  # Max items per request (TNM default is 50)
+        page_size = DEFAULT_PAGE_SIZE
 
         while True:
             params = {
@@ -73,11 +79,8 @@ class TNMTileSource(TileSource):
                 "offset": offset,
             }
 
-            try:
-                response = self.client.get(TNM_API_BASE, params=params)
-                response.raise_for_status()
-            except httpx.HTTPError as e:
-                raise ValueError(f"TNM API request failed: {e}") from e
+            # Retry loop for this page
+            response = self._get_with_backoff(params)
 
             try:
                 data = response.json()
@@ -107,6 +110,68 @@ class TNMTileSource(TileSource):
 
         logger.info(f"Found {len(tiles)} tiles from TNM (total {total} items)")
         return tiles
+
+    def _get_with_backoff(self, params: dict) -> httpx.Response:
+        """Execute TNM API request with exponential backoff retry on 5xx errors.
+
+        Parameters
+        ----------
+        params : dict
+            Query parameters for TNM API request.
+
+        Returns
+        -------
+        httpx.Response
+            Successful response from TNM API.
+
+        Raises
+        ------
+        ValueError
+            If the request fails after max retries or on 4xx client errors.
+        """
+        backoff = INITIAL_BACKOFF
+        last_error = None
+
+        for attempt in range(MAX_RETRIES):
+            try:
+                response = self.client.get(TNM_API_BASE, params=params)
+
+                # 5xx errors: retry with backoff
+                if 500 <= response.status_code < 600:
+                    last_error = f"HTTP {response.status_code}"
+                    if attempt < MAX_RETRIES - 1:
+                        logger.warning(
+                            f"TNM API returned {response.status_code}, retrying in {backoff:.1f}s "
+                            f"(attempt {attempt + 1}/{MAX_RETRIES})"
+                        )
+                        time.sleep(backoff)
+                        backoff = min(backoff * 2, MAX_BACKOFF)
+                        continue
+                    else:
+                        raise ValueError(f"TNM API request failed after {MAX_RETRIES} retries: {last_error}")
+
+                # 4xx errors: fail immediately (client error, not server issue)
+                response.raise_for_status()
+                return response
+
+            except httpx.TimeoutException as e:
+                last_error = f"Timeout: {e}"
+                if attempt < MAX_RETRIES - 1:
+                    logger.warning(
+                        f"TNM API request timed out, retrying in {backoff:.1f}s "
+                        f"(attempt {attempt + 1}/{MAX_RETRIES})"
+                    )
+                    time.sleep(backoff)
+                    backoff = min(backoff * 2, MAX_BACKOFF)
+                    continue
+                else:
+                    raise ValueError(f"TNM API request failed after {MAX_RETRIES} retries: {last_error}") from e
+
+            except httpx.HTTPError as e:
+                raise ValueError(f"TNM API request failed: {e}") from e
+
+        raise ValueError(f"TNM API request failed after {MAX_RETRIES} retries: {last_error}")
+
 
     def _parse_tnm_item(self, item: dict[str, Any]) -> Tile:
         """Parse a single TNM product item into Tile object.

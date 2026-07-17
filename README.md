@@ -101,6 +101,16 @@ result = run_pipeline(
 
 The CLI `--data-dir` option takes precedence over the `DEMETRIUS_DATA_DIR` environment variable.
 
+### TNM API Resilience
+
+The TNM (USGS 3DEP) Access API occasionally returns 504 Server Unavailable errors, especially during high-load periods. demetrius handles this automatically by:
+
+- **Retrying failed requests** up to 5 times with exponential backoff (1s → 2s → 4s → 8s → 16s)
+- **Reducing page size** from 50 to 25 items per request to reduce payload size and improve reliability
+- **Distinguishing error types**: Retrying on 5xx server errors, failing immediately on 4xx client errors and timeouts after retries
+
+This is handled transparently—no configuration needed. If tile discovery still fails after retries, the error message will indicate the issue clearly.
+
 ## Quick Start
 
 ### Basic Usage

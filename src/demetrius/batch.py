@@ -56,6 +56,7 @@ def batch_process(
     no_clip: bool = False,
     project_bounds: Optional[Union[ProjectBoundaries, str, Path]] = None,
     require_full_coverage: bool = False,
+    data_dir: Optional[Union[str, Path]] = None,
     mode: str = "full",
     max_workers: int = 1,
 ) -> list[PipelineResult]:
@@ -92,6 +93,8 @@ def batch_process(
         and reused across all AOIs.
     require_full_coverage : bool, default=False
         Require full coverage of each AOI by project boundaries.
+    data_dir : str | Path | None
+        Directory for downloaded tiles. Defaults to ``DEMETRIUS_DATA_DIR`` env var or ``~/.demetrius``.
     mode : {"full", "download-only", "process-only"}
         Which pipeline stages to run for each AOI.
     max_workers : int, default=1
@@ -146,6 +149,7 @@ def batch_process(
             no_clip=no_clip,
             project_bounds=project_bounds,
             require_full_coverage=require_full_coverage,
+            data_dir=data_dir,
             mode=mode,
         )
 

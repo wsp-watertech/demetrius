@@ -1,6 +1,7 @@
 """Parallel tile downloading with integrity checks."""
 
 import logging
+import os
 import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -12,7 +13,7 @@ from .models import Tile
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_DATA_DIR = Path.home() / ".demetrius"
+DEFAULT_DATA_DIR = Path(os.environ.get("DEMETRIUS_DATA_DIR", Path.home() / ".demetrius"))
 MAX_RETRIES = 3
 RETRY_BACKOFF = 2
 

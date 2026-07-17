@@ -69,6 +69,38 @@ Both the demetrius library (which uses Python's `tempfile` module) and GDAL (for
 
 **Performance tip:** For large mosaics or batch processing, using a fast local SSD for temp storage can significantly speed up processing times.
 
+### Downloaded Tile Storage
+
+By default, demetrius stores downloaded tiles in `~/.demetrius`. To store downloads in a different location (e.g., a scratch space, faster disk, or shared network drive):
+
+**Set the `DEMETRIUS_DATA_DIR` environment variable:**
+
+```bash
+# Use a custom data directory
+export DEMETRIUS_DATA_DIR=/scratch/demetrius_tiles
+demetrius process --aoi site.shp --output dem.tif --project-bounds boundaries.gpkg
+```
+
+**Or pass `--data-dir` to the CLI:**
+
+```bash
+demetrius process --aoi site.shp --output dem.tif --project-bounds boundaries.gpkg --data-dir /scratch/demetrius_tiles
+```
+
+**Or in Python:**
+
+```python
+from demetrius.pipeline import run_pipeline
+result = run_pipeline(
+    aoi,
+    output_path,
+    project_bounds=boundaries,
+    data_dir="/scratch/demetrius_tiles"
+)
+```
+
+The CLI `--data-dir` option takes precedence over the `DEMETRIUS_DATA_DIR` environment variable.
+
 ## Quick Start
 
 ### Basic Usage

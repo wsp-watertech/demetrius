@@ -67,6 +67,7 @@ def run_pipeline(
     no_clip: bool = False,
     project_bounds: Optional[Union[ProjectBoundaries, str, Path]] = None,
     require_full_coverage: bool = False,
+    data_dir: Optional[Union[str, Path]] = None,
     mode: PipelineMode = "full",
     progress_cb: Optional[ProgressCallback] = None,
 ) -> PipelineResult:
@@ -101,6 +102,8 @@ def run_pipeline(
         Project boundaries instance, or a path to load one from.
     require_full_coverage : bool, default=False
         Require full coverage of the original AOI by project boundaries.
+    data_dir : str | Path | None
+        Directory for downloaded tiles. Defaults to ``DEMETRIUS_DATA_DIR`` env var or ``~/.demetrius``.
     mode : {"full", "download-only", "process-only"}
         Which pipeline stages to run.
     progress_cb : Callable[[str], None] | None
@@ -283,7 +286,7 @@ def run_pipeline(
             def _download_progress(completed, total):
                 _report(f"Downloaded {completed}/{total} tiles")
 
-            downloader = TileDownloader(progress_callback=_download_progress)
+            downloader = TileDownloader(data_dir=data_dir, progress_callback=_download_progress)
             downloaded_tiles = downloader.download(prioritized_tiles)
             _report(f"Downloaded {len(downloaded_tiles)} tiles")
 

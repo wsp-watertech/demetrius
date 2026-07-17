@@ -85,6 +85,12 @@ def cli():
     help="Require full coverage of original AOI (default: coverage is optional)",
 )
 @click.option(
+    "--data-dir",
+    type=click.Path(),
+    default=None,
+    help="Directory for downloaded tiles (default: DEMETRIUS_DATA_DIR env var or ~/.demetrius)",
+)
+@click.option(
     "--mode",
     default="full",
     type=click.Choice(["full", "download-only", "process-only"]),
@@ -101,6 +107,7 @@ def process(
     no_clip,
     project_bounds,
     require_full_coverage,
+    data_dir,
     mode,
 ):
     """Process the DEM workflow.
@@ -122,6 +129,7 @@ def process(
         no_clip=no_clip,
         project_bounds=project_bounds,
         require_full_coverage=require_full_coverage,
+        data_dir=data_dir,
         mode=mode,
         progress_cb=lambda msg: click.echo(msg),
     )
@@ -254,6 +262,12 @@ def inspect(aoi: str) -> None:
     help="Require full coverage of each AOI (default: coverage is optional)",
 )
 @click.option(
+    "--data-dir",
+    type=click.Path(),
+    default=None,
+    help="Directory for downloaded tiles (default: DEMETRIUS_DATA_DIR env var or ~/.demetrius)",
+)
+@click.option(
     "--mode",
     default="full",
     type=click.Choice(["full", "download-only", "process-only"]),
@@ -277,6 +291,7 @@ def batch(
     no_clip,
     project_bounds,
     require_full_coverage,
+    data_dir,
     mode,
     max_workers,
 ):
@@ -299,6 +314,7 @@ def batch(
             no_clip=no_clip,
             project_bounds=project_bounds,
             require_full_coverage=require_full_coverage,
+            data_dir=data_dir,
             mode=mode,
             max_workers=max_workers,
         )

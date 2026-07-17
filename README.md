@@ -231,44 +231,53 @@ demetrius process --aoi site.shp --mode process-only
 Requires manifest from previous `download-only` run (named `{output}.manifest.json`).
 
 ### Batch Processing Multiple Areas
-Process multiple polygons from a vector file by looping through features. No new functionality needed—just iterate and process each polygon separately:
+Use the built-in `batch` command to process every polygon in a vector file in
+one call. You must tell it which column to use for naming output DEMs via
+`--name-field`—no field name (e.g. `shortname`) is assumed:
 
-```python
-import geopandas as gpd
-from src.demetrius.cli import process
-from pathlib import Path
-
-# Load polygons from GeoPackage, Shapefile, GeoJSON, etc.
-polygons = gpd.read_file("study_areas.gpkg")
-
-output_dir = Path("./output_dems")
-output_dir.mkdir(exist_ok=True)
-
-for idx, row in polygons.iterrows():
-    aoi_name = row.get("name", f"area_{idx}")
-    
-    # Create temporary GeoJSON for this feature
-    feature_path = output_dir / f"{aoi_name}_aoi.geojson"
-    gpd.GeoDataFrame([row], crs=polygons.crs).to_file(feature_path, driver="GeoJSON")
-    
-    # Process this feature
-    output_dem = output_dir / f"{aoi_name}_dem.tif"
-    process(
-        aoi=str(feature_path),
-        output=str(output_dem),
-        output_crs="EPSG:32111",
-        buffer=500,
-        cellsize=1.0
-    )
-    
-    # Manifest saved as {output}.manifest.json for reproducibility
-    print(f"✓ Generated {output_dem} with metadata in {output_dem}.manifest.json")
-    
-    # Clean up temporary feature file
-    feature_path.unlink()
+```bash
+demetrius batch \
+  --input study_areas.gpkg \
+  --name-field name \
+  --output-dir ./output_dems \
+  --project-bounds boundaries.gpkg \
+  --output-crs EPSG:32111 \
+  --buffer 500 \
+  --cellsize 1.0
 ```
 
-Each DEM gets its own manifest file (`{name}_dem.tif.manifest.json`) recording tiles, buffer, cellsize, and other parameters for reproducibility.
+Or with the FFRD projection defaults applied to every AOI:
+
+```bash
+demetrius batch --input study_areas.gpkg --name-field name --ffrd --project-bounds boundaries.gpkg
+```
+
+Each DEM gets its own output (`{output-dir}/{name}.tif`) and manifest
+(`{output-dir}/{name}.tif.manifest.json`) recording tiles, buffer, cellsize,
+and other parameters for reproducibility. Add `--max-workers N` to process
+multiple AOIs concurrently.
+
+The same functionality is available as a library call for programmatic use:
+
+```python
+from demetrius.batch import batch_process
+
+results = batch_process(
+    "study_areas.gpkg",
+    name_field="name",
+    output_dir="./output_dems",
+    project_bounds="boundaries.gpkg",
+    output_crs="EPSG:32111",
+    buffer=500,
+    cellsize=1.0,
+)
+
+for result in results:
+    if result.status == "success":
+        print(f"✓ {result.name}: {result.output_path}")
+    else:
+        print(f"✗ {result.name}: {result.error}")
+```
 
 ## Options
 
@@ -276,12 +285,23 @@ Each DEM gets its own manifest file (`{name}_dem.tif.manifest.json`) recording t
 --aoi PATH                      Path to AOI (shapefile, GeoJSON, GeoPackage)
 --output PATH                   Output file path [default: dem.tif]
 --output-crs EPSG:CODE          Target CRS (e.g., EPSG:32618) [default: auto-detect]
+--ffrd                          Use FFRD custom projection (overrides --output-crs, enforces snapping, defaults to cellsize=4)
 --buffer METERS                 Buffer for tile discovery and clipping [default: 0]
 --cellsize FLOAT                Output cellsize in target CRS units [default: 1m converted to CRS units]
 --no-snap                       Disable grid snapping [default: enabled]
 --require-full-coverage         Fail if AOI not fully covered [default: True]
 --mode {full,download-only,process-only}
                                 Processing mode [default: full]
+```
+
+### `batch` command options
+
+```
+--input PATH                    Path to vector file of AOI polygons
+--name-field TEXT                Column to use for naming each output DEM (required)
+--output-dir PATH               Output directory for DEMs and manifests [default: ./batch_output]
+--max-workers INT               Number of AOIs to process concurrently [default: 1]
+                                 (plus all options shared with `process`, applied to every AOI)
 ```
 
 ### Default Cellsize and Grid Snapping

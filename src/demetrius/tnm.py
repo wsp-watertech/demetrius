@@ -61,7 +61,7 @@ class TNMTileSource(TileSource):
 
         tiles = []
         offset = 0
-        page_size = 100  # Max items per request (TNM default is 50)
+        page_size = 50  # Max items per request (TNM default is 50)
 
         while True:
             params = {

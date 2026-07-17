@@ -1,6 +1,7 @@
 """VRT-based mosaicking for efficient large-scale raster merging."""
 
 import logging
+import os
 import subprocess
 from pathlib import Path
 from typing import Sequence
@@ -67,6 +68,7 @@ def materialize_vrt(vrt_path: Path, output_path: Path) -> Path:
             capture_output=True,
             text=True,
             check=False,
+            env=os.environ.copy(),
         )
 
         if result.returncode != 0:
@@ -147,6 +149,7 @@ class VRTMosaicker:
                 capture_output=True,
                 text=True,
                 check=False,
+                env=os.environ.copy(),
             )
 
             if result.returncode != 0:
@@ -202,6 +205,7 @@ class VRTMosaicker:
                 capture_output=True,
                 text=True,
                 check=False,
+                env=os.environ.copy(),
             )
 
             if result.returncode != 0:

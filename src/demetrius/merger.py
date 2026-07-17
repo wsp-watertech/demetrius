@@ -150,7 +150,7 @@ class DatasetMerger:
         tile_paths = [str(Path(t.local_path)) for t in tiles]
 
         cmd = ["gdalbuildvrt", "-quiet", str(vrt_path)] + tile_paths
-        subprocess.run(cmd, check=True, capture_output=True)
+        subprocess.run(cmd, check=True, capture_output=True, env=os.environ.copy())
 
         return vrt_path
 
@@ -207,6 +207,7 @@ class DatasetMerger:
                 capture_output=True,
                 text=True,
                 check=False,
+                env=os.environ.copy(),
             )
 
             if result.returncode != 0:

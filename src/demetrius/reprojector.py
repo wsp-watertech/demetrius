@@ -1,6 +1,7 @@
 """Reprojection of rasters using GDAL."""
 
 import logging
+import os
 import subprocess
 from pathlib import Path
 
@@ -104,6 +105,7 @@ class Reprojector:
                 capture_output=True,
                 text=True,
                 check=False,
+                env=os.environ.copy(),
             )
 
             if result.returncode != 0:

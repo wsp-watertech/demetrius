@@ -1,6 +1,7 @@
 """Elevation value conversion based on CRS linear units."""
 
 import logging
+import os
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -184,6 +185,7 @@ class ElevationConverter:
                 capture_output=True,
                 text=True,
                 check=False,
+                env=os.environ.copy(),
             )
 
             if result.returncode != 0:

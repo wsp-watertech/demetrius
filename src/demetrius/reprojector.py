@@ -86,9 +86,6 @@ class Reprojector:
                 "COMPRESS=DEFLATE",
                 "-co",
                 "BIGTIFF=YES",  # Support files > 4GB
-                "--config",
-                "CHECK_DISK_FREE_SPACE",
-                "FALSE",
                 "-overwrite",
             ]
 

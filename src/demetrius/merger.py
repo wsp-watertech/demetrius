@@ -1,20 +1,34 @@
-"""Priority-based dataset merging with strict overwrite semantics."""
+"""Priority-based dataset merging with strict overwrite semantics.
 
+Merging, reprojection, and clipping are combined into a single ``gdalwarp``
+pass whenever possible. Doing all three in one call avoids materializing a
+full-resolution intermediate raster (the merged-but-not-yet-reprojected
+raster) and avoids resampling the data twice, which is both faster and
+avoids an extra disk read/write of the largest raster in the pipeline.
+"""
+
+import json
 import logging
 import os
 import subprocess
 import tempfile
 from collections import defaultdict
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
+
+from shapely.geometry import mapping
+from shapely.geometry.base import BaseGeometry
 
 from .models import Tile
 
 logger = logging.getLogger(__name__)
 
+ALLOWED_RESAMPLING_METHODS = ["bilinear", "cubic", "cubicspline", "lanczos"]
+
 
 class DatasetMerger:
-    """Merge multiple datasets with priority-based overwrite."""
+    """Merge multiple datasets with priority-based overwrite, optionally
+    combined with reprojection and clipping in a single gdalwarp pass."""
 
     def __init__(self, working_dir: Path):
         """Initialize merger.
@@ -31,16 +45,24 @@ class DatasetMerger:
         """
         self.working_dir = Path(working_dir)
 
-    def merge_datasets(
+    def merge_reproject_clip(
         self,
         tiles: Sequence[Tile],
         output_path: Path,
+        target_crs: str,
         dataset_vrts: Optional[dict[str, Path]] = None,
+        resampling: str = "bilinear",
+        cellsize: Optional[float] = None,
+        cutline_geometry: Optional[BaseGeometry] = None,
+        snap_to_grid: bool = True,
     ) -> Path:
-        """Merge tiles from multiple datasets with priority.
+        """Merge datasets by priority, reproject, optionally clip and snap to grid in one pass.
 
-        Process datasets from oldest (lowest priority) to newest.
-        Newer datasets completely overwrite older ones (no blending).
+        Datasets are processed from oldest (lowest priority) to newest so
+        that newer datasets completely overwrite older ones in overlap areas
+        (no blending) -- same semantics as a merge-then-reproject-then-clip-then-snap
+        pipeline, but all done in a single gdalwarp invocation to avoid
+        writing/reading intermediate rasters.
 
         Parameters
         ----------
@@ -48,20 +70,102 @@ class DatasetMerger:
             All selected tiles, ideally pre-sorted by priority.
         output_path : Path
             Output raster path.
+        target_crs : str
+            Target CRS to reproject to, such as ``"EPSG:32618"``.
+        dataset_vrts : dict[str, Path] | None, optional
+            Optional pre-created VRTs for each dataset.
+        resampling : str, default="bilinear"
+            Resampling method, such as ``bilinear`` or ``cubic``.
+        cellsize : float | None, optional
+            Output cell size in target CRS units.
+        cutline_geometry : BaseGeometry | None, optional
+            Optional clip geometry in WGS84 (EPSG:4326). If provided, the
+            output is cropped to this geometry as part of the same gdalwarp
+            call.
+        snap_to_grid : bool, default=True
+            If True, use gdalwarp's -tap (target aligned pixels) flag to align
+            output pixels to the grid, eliminating the need for a separate
+            snapping step. If False, output pixels may not align to the grid.
+
+        Returns
+        -------
+        Path
+            Path to the merged, reprojected, clipped, and (optionally) snapped raster.
+
+        Raises
+        ------
+        ValueError
+            If there are no datasets to merge, or the resampling method or
+            cellsize is invalid, or the gdalwarp call fails.
+        RuntimeError
+            If ``gdalwarp`` is not available.
+        """
+        if resampling not in ALLOWED_RESAMPLING_METHODS:
+            raise ValueError(
+                f"Resampling method '{resampling}' not allowed. "
+                f"Use one of: {', '.join(ALLOWED_RESAMPLING_METHODS)}"
+            )
+        if cellsize is not None and cellsize <= 0:
+            raise ValueError(f"Cellsize must be positive, got {cellsize}")
+
+        dataset_rasters = self._get_priority_ordered_rasters(tiles, dataset_vrts)
+
+        log_msg = (
+            f"Merging {len(dataset_rasters)} dataset(s) and reprojecting to "
+            f"{target_crs} (resampling: {resampling})"
+        )
+        if cutline_geometry is not None:
+            log_msg += ", clipping to AOI"
+        if snap_to_grid:
+            log_msg += ", snapping to grid"
+        log_msg += " in a single gdalwarp pass"
+        logger.info(log_msg)
+
+        cutline_path: Optional[Path] = None
+        try:
+            if cutline_geometry is not None:
+                cutline_path = self._write_cutline_geojson(cutline_geometry)
+
+            result_path = self._run_combined_gdalwarp(
+                dataset_rasters,
+                output_path,
+                target_crs=target_crs,
+                resampling=resampling,
+                cellsize=cellsize,
+                cutline_path=cutline_path,
+                snap_to_grid=snap_to_grid,
+            )
+        finally:
+            if cutline_path is not None:
+                cutline_path.unlink(missing_ok=True)
+
+        logger.info(f"Merge/reproject/clip complete: {result_path}")
+        return result_path
+
+    def _get_priority_ordered_rasters(
+        self,
+        tiles: Sequence[Tile],
+        dataset_vrts: Optional[dict[str, Path]] = None,
+    ) -> list[Path]:
+        """Resolve dataset rasters/VRTs in priority order (oldest to newest).
+
+        Parameters
+        ----------
+        tiles : Sequence[Tile]
+            All selected tiles, ideally pre-sorted by priority.
         dataset_vrts : dict[str, Path] | None, optional
             Optional pre-created VRTs for each dataset.
 
         Returns
         -------
-        Path
-            Path to the merged raster.
+        list[Path]
+            Dataset rasters/VRTs ordered from lowest to highest priority.
 
         Raises
         ------
         ValueError
-            If there are no datasets to merge or no merged dataset is created.
+            If there are no datasets to merge.
         """
-        # Group by dataset and sort by priority
         dataset_groups: dict[str, list[Tile]] = defaultdict(list)
         for tile in tiles:
             dataset_groups[tile.dataset_id].append(tile)
@@ -78,22 +182,6 @@ class DatasetMerger:
         if not sorted_datasets:
             raise ValueError("No datasets to merge")
 
-        logger.info(f"Merging {len(sorted_datasets)} datasets in priority order")
-
-        # If only one dataset, no merge needed - just return the VRT
-        if len(sorted_datasets) == 1:
-            dataset_id, priority = sorted_datasets[0]
-            dataset_tiles = dataset_groups[dataset_id]
-
-            if dataset_vrts and dataset_id in dataset_vrts:
-                dataset_raster = dataset_vrts[dataset_id]
-            else:
-                dataset_raster = self._prepare_dataset(dataset_id, dataset_tiles)
-
-            logger.info(f"Single dataset; no merge needed: {dataset_raster}")
-            return dataset_raster
-
-        # Collect all dataset VRTs in priority order for a single multi-input gdalwarp call
         dataset_rasters: list[Path] = []
         for dataset_id, priority in sorted_datasets:
             dataset_tiles = dataset_groups[dataset_id]
@@ -109,14 +197,7 @@ class DatasetMerger:
 
             dataset_rasters.append(dataset_raster)
 
-        # Merge all datasets in one gdalwarp call with -multi for parallelism
-        logger.info(
-            f"Running single multi-input gdalwarp merge for {len(dataset_rasters)} datasets"
-        )
-        merged_raster = self._merge_all_with_gdalwarp(dataset_rasters, output_path)
-
-        logger.info(f"Merging complete: {merged_raster}")
-        return merged_raster
+        return dataset_rasters
 
     def _prepare_dataset(self, dataset_id: str, tiles: Sequence[Tile]) -> Path:
         """Prepare dataset for merging (VRT of all tiles or single tile).
@@ -154,21 +235,57 @@ class DatasetMerger:
 
         return vrt_path
 
-    def _merge_all_with_gdalwarp(
+    def _write_cutline_geojson(self, geometry: BaseGeometry) -> Path:
+        """Write a shapely geometry (WGS84) to a temporary GeoJSON file for use
+        as a gdalwarp cutline.
+
+        Parameters
+        ----------
+        geometry : BaseGeometry
+            Shapely geometry in WGS84 (EPSG:4326).
+
+        Returns
+        -------
+        Path
+            Path to the temporary GeoJSON file. Caller is responsible for
+            deleting it.
+        """
+        geojson: dict[str, Any] = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {},
+                    "geometry": mapping(geometry),
+                }
+            ],
+        }
+
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".geojson",
+            delete=False,
+            dir=self.working_dir,
+        ) as f:
+            json.dump(geojson, f)
+            return Path(f.name)
+
+    def _run_combined_gdalwarp(
         self,
         dataset_rasters: list[Path],
         output_raster: Path,
+        target_crs: str,
+        resampling: str,
+        cellsize: Optional[float],
+        cutline_path: Optional[Path],
+        snap_to_grid: bool = True,
     ) -> Path:
-        """Merge multiple rasters in a single gdalwarp call.
+        """Run a single gdalwarp call that merges (priority overwrite),
+        reprojects, optionally clips and snaps to grid.
 
-        Processes all input rasters in order via gdalwarp, where later rasters
-        overlay earlier ones (newer datasets overwrite older). Uses -multi for
+        Processes all input rasters in order, where later rasters overlay
+        earlier ones (newer datasets overwrite older). Uses ``-multi`` for
         multithreaded resampling/warping.
-
-        This is significantly faster than pairwise merging because:
-        - Single pass instead of N-1 sequential gdalwarp calls
-        - No intermediate raster materialization
-        - Parallelism across all inputs simultaneously
 
         Parameters
         ----------
@@ -177,30 +294,64 @@ class DatasetMerger:
             newest (highest priority). Later entries overwrite earlier ones.
         output_raster : Path
             Output path.
+        target_crs : str
+            Target CRS to reproject to.
+        resampling : str
+            Resampling method.
+        cellsize : float | None
+            Output cell size in target CRS units, if specified.
+        cutline_path : Path | None
+            Path to a GeoJSON cutline file, if clipping is requested.
+        snap_to_grid : bool, default=True
+            If True, use -tap (target aligned pixels) flag to align output
+            pixels to the grid.
 
         Returns
         -------
         Path
-            Path to the merged raster.
+            Path to the merged/reprojected/clipped/snapped raster.
 
         Raises
         ------
         ValueError
-            If the merge fails.
+            If the gdalwarp call fails.
         RuntimeError
             If ``gdalwarp`` is not available.
         """
-        logger.debug(f"Merging {len(dataset_rasters)} rasters with gdalwarp -multi")
-
         try:
             cmd = [
                 "gdalwarp",
                 "-overwrite",
+                "-t_srs",
+                target_crs,
+                "-r",
+                resampling,
                 "-multi",
-                "--config",
-                "CHECK_DISK_FREE_SPACE",
-                "FALSE",
-            ] + [str(r) for r in dataset_rasters] + [str(output_raster)]
+                "-wo",
+                "NUM_THREADS=ALL_CPUS",
+                "-wm",
+                "2000",  # 2GB working memory for efficient block processing
+                "-co",
+                "TILED=YES",
+                "-co",
+                "COMPRESS=DEFLATE",
+                "-co",
+                "BIGTIFF=YES",  # Support files > 4GB
+            ]
+
+            if snap_to_grid:
+                cmd.append("-tap")  # Target aligned pixels
+
+            if cellsize is not None:
+                # Round to 9 decimal places to avoid floating-point precision artifacts
+                cellsize_str = f"{cellsize:.9f}".rstrip("0").rstrip(".")
+                cmd.extend(["-tr", cellsize_str, cellsize_str])
+
+            if cutline_path is not None:
+                cmd.extend(["-cutline", str(cutline_path), "-crop_to_cutline"])
+
+            cmd.extend([str(r) for r in dataset_rasters])
+            cmd.append(str(output_raster))
 
             result = subprocess.run(
                 cmd,
@@ -211,9 +362,8 @@ class DatasetMerger:
             )
 
             if result.returncode != 0:
-                raise ValueError(f"gdalwarp merge failed: {result.stderr}")
+                raise ValueError(f"gdalwarp merge/reproject/clip/snap failed: {result.stderr}")
 
-            logger.debug(f"Merged to {output_raster}")
             return output_raster
 
         except FileNotFoundError:

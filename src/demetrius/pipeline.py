@@ -1,8 +1,9 @@
 """Core DEM generation pipeline.
 
-This module contains the actual query -> download -> mosaic -> reproject ->
-clip -> snap -> COG workflow as a reusable library function, independent of
-the CLI. ``cli.py`` and ``batch.py`` both build on :func:`run_pipeline`.
+This module contains the actual query -> download -> mosaic ->
+merge/reproject/clip (single gdalwarp pass) -> snap -> COG workflow as a
+reusable library function, independent of the CLI. ``cli.py`` and
+``batch.py`` both build on :func:`run_pipeline`.
 """
 
 import logging
@@ -170,7 +171,6 @@ def run_pipeline(
     try:
         _ensure_tmpdir_valid()
 
-        from .clipper import Clipper
         from .cog import COGGenerator
         from .coverage import validate_coverage
         from .crs import get_target_utm_for_tiles
@@ -182,7 +182,6 @@ def run_pipeline(
         from .mosaicker import VRTMosaicker
         from .priority import prioritize_datasets
         from .projections import get_projection_file
-        from .reprojector import Reprojector
         from .snapper import Snapper
         from .tnm import TNMTileSource
 
@@ -358,31 +357,14 @@ def run_pipeline(
                 vrt_path = mosaicker.create_dataset_vrt(dataset_id, tiles)
                 dataset_vrts[dataset_id] = vrt_path
 
-            _report("Merging datasets...")
-            if len(dataset_vrts) == 1:
-                merged_raster = list(dataset_vrts.values())[0]
-            else:
-                merger = DatasetMerger(Path(tmpdir))
-                merged_raster = merger.merge_datasets(
-                    downloaded_tiles,
-                    Path(tmpdir) / "merged.tif",
-                    dataset_vrts=dataset_vrts,
-                )
-
-            # Step 4: Reproject and clip
-            if no_clip:
-                _report("Reprojecting (clipping disabled)...")
-            else:
-                _report("Reprojecting and clipping...")
-
-            reprojector = Reprojector()
-            reprojected = Path(tmpdir) / "reprojected.tif"
-            reprojector.reproject(
-                merged_raster, reprojected, output_crs, cellsize=effective_cellsize
-            )
-
+            # Step 4: Merge (priority overwrite), reproject, clip, and optionally
+            # snap to grid in a single gdalwarp pass. Combining these avoids
+            # materializing multiple full-resolution intermediate rasters between
+            # steps (previously merged.tif and reprojected.tif), which cuts both
+            # runtime and disk usage significantly for large multi-dataset jobs.
+            cutline_geometry_wgs84 = None
             if not no_clip:
-                _report("Clipping to AOI with buffer...")
+                _report("Merging, reprojecting, and clipping to AOI with buffer...")
 
                 clipping_geometry = aoi_obj.buffered_geometry_in_crs(output_crs)
 
@@ -390,35 +372,30 @@ def run_pipeline(
 
                 gdf_clip = gpd.GeoDataFrame([{"geometry": clipping_geometry}], crs=output_crs)
                 gdf_wgs84 = gdf_clip.to_crs("EPSG:4326")
-                clipping_geometry_wgs84 = gdf_wgs84.iloc[0].geometry
-
-                clipper = Clipper()
-                clipped = Path(tmpdir) / "clipped.tif"
-                clipper.clip(
-                    reprojected,
-                    clipped,
-                    clipping_geometry_wgs84,
-                    geometry_crs="EPSG:4326",
-                )
-                _report("Reprojected and clipped")
+                cutline_geometry_wgs84 = gdf_wgs84.iloc[0].geometry
             else:
-                clipped = reprojected
-                _report("Reprojected (unclipped)")
+                _report("Merging and reprojecting (clipping disabled)...")
 
-            # Step 5: Snap to grid (optional), convert elevation units, generate COG
-            if not no_snap:
-                _report("Snapping to grid and converting elevation units...")
+            merger = DatasetMerger(Path(tmpdir))
+            clipped = merger.merge_reproject_clip(
+                downloaded_tiles,
+                Path(tmpdir) / "merged.tif",
+                target_crs=output_crs,
+                dataset_vrts=dataset_vrts,
+                cellsize=effective_cellsize,
+                cutline_geometry=cutline_geometry_wgs84,
+                snap_to_grid=not no_snap,
+            )
 
-                snapped = Path(tmpdir) / "snapped.tif"
-                snapper = Snapper()
-                snapper.snap(clipped, snapped, cellsize=effective_cellsize)
-                clipped = snapped
+            if not no_clip:
+                _report("Merged, reprojected, and clipped")
             else:
-                _report("Converting elevation units and generating Cloud-Optimized GeoTIFF...")
+                _report("Merged and reprojected (unclipped)")
 
-            elevation_converter = ElevationConverter()
-            converted = Path(tmpdir) / "converted.tif"
-            elevation_converter.convert(clipped, converted, output_crs)
+            # Step 5: Convert elevation units and generate COG
+            # Note: gdalwarp's -tap flag in merge_reproject_clip already handled snapping
+            # to grid, so the separate snapper step is skipped.
+            _report("Converting elevation units and generating Cloud-Optimized GeoTIFF...")
 
             cog_gen = COGGenerator()
             output_path.parent.mkdir(parents=True, exist_ok=True)

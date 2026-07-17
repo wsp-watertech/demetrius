@@ -1,0 +1,390 @@
+"""Core DEM generation pipeline.
+
+This module contains the actual query -> download -> mosaic -> reproject ->
+clip -> snap -> COG workflow as a reusable library function, independent of
+the CLI. ``cli.py`` and ``batch.py`` both build on :func:`run_pipeline`.
+"""
+
+import logging
+import tempfile
+from collections import defaultdict
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable, Literal, Optional, Union
+
+from .models import AOI
+from .project_boundaries import ProjectBoundaries
+
+logger = logging.getLogger(__name__)
+
+ProgressCallback = Callable[[str], None]
+
+PipelineMode = Literal["full", "download-only", "process-only"]
+PipelineStatus = Literal["success", "failed"]
+
+
+@dataclass
+class PipelineResult:
+    """Outcome of running the pipeline for a single AOI.
+
+    Attributes
+    ----------
+    name : str
+        Name used to label this run (e.g. AOI shortname).
+    status : {"success", "failed"}
+        Whether the pipeline completed successfully.
+    output_path : Path | None
+        Path to the generated COG, if produced.
+    manifest_path : Path | None
+        Path to the saved manifest, if produced.
+    tile_count : int
+        Number of tiles used.
+    dataset_count : int
+        Number of unique datasets used.
+    error : str | None
+        Error message, if the run failed.
+    """
+
+    name: str
+    status: PipelineStatus
+    output_path: Optional[Path] = None
+    manifest_path: Optional[Path] = None
+    tile_count: int = 0
+    dataset_count: int = 0
+    error: Optional[str] = None
+
+
+def run_pipeline(
+    aoi: Union[AOI, str, Path],
+    output: Union[str, Path],
+    *,
+    name: str = "dem",
+    output_crs: Optional[str] = None,
+    ffrd: bool = False,
+    buffer: int = 0,
+    cellsize: Optional[float] = None,
+    no_snap: bool = False,
+    no_clip: bool = False,
+    project_bounds: Optional[Union[ProjectBoundaries, str, Path]] = None,
+    require_full_coverage: bool = False,
+    mode: PipelineMode = "full",
+    progress_cb: Optional[ProgressCallback] = None,
+) -> PipelineResult:
+    """Run the full demetrius DEM pipeline for a single AOI.
+
+    Parameters
+    ----------
+    aoi : AOI | str | Path
+        An already-constructed :class:`~demetrius.models.AOI`, or a path to a
+        geometry file to load (buffer is applied when loading from a path).
+    output : str | Path
+        Output COG path.
+    name : str, default="dem"
+        Label used for logging/progress messages and in the returned result.
+    output_crs : str | None
+        Target CRS (e.g. ``"EPSG:32618"``). Ignored if ``ffrd=True``.
+    ffrd : bool, default=False
+        Use the bundled FFRD projection, forcing snapping and a default
+        cellsize of 4 unless overridden.
+    buffer : int, default=0
+        Buffer distance in output CRS units for tile discovery and clipping.
+        Only used when ``aoi`` is a path; ignored if ``aoi`` is already an
+        :class:`AOI` instance.
+    cellsize : float | None
+        Output cellsize in target CRS units.
+    no_snap : bool, default=False
+        Disable grid snapping.
+    no_clip : bool, default=False
+        Disable clipping to AOI. If True, output is full merged/reprojected extent
+        rather than clipped to the buffered AOI.
+    project_bounds : ProjectBoundaries | str | Path | None
+        Project boundaries instance, or a path to load one from.
+    require_full_coverage : bool, default=False
+        Require full coverage of the original AOI by project boundaries.
+    mode : {"full", "download-only", "process-only"}
+        Which pipeline stages to run.
+    progress_cb : Callable[[str], None] | None
+        Optional callback invoked with human-readable progress messages.
+
+    Returns
+    -------
+    PipelineResult
+        Structured result describing success/failure and output locations.
+        Expected failures (bad input, coverage gaps, no tiles found, etc.)
+        are captured here rather than raised.
+    """
+
+    def _report(message: str) -> None:
+        logger.info(f"[{name}] {message}")
+        if progress_cb is not None:
+            progress_cb(message)
+
+    try:
+        from .clipper import Clipper
+        from .cog import COGGenerator
+        from .coverage import validate_coverage
+        from .crs import get_target_utm_for_tiles
+        from .downloader import TileDownloader
+        from .elevation_converter import ElevationConverter
+        from .filtering import filter_tiles_by_aoi
+        from .manifest import Manifest
+        from .merger import DatasetMerger
+        from .mosaicker import VRTMosaicker
+        from .priority import prioritize_datasets
+        from .projections import get_projection_file
+        from .reprojector import Reprojector
+        from .snapper import Snapper
+        from .tnm import TNMTileSource
+
+        output_path = Path(output)
+
+        # Resolve AOI
+        if isinstance(aoi, AOI):
+            aoi_obj = aoi
+        else:
+            aoi_obj = AOI.from_file(str(aoi), buffer=buffer)
+
+        # Resolve project bounds
+        proj_bounds: Optional[ProjectBoundaries]
+        if isinstance(project_bounds, ProjectBoundaries) or project_bounds is None:
+            proj_bounds = project_bounds
+        else:
+            proj_bounds = ProjectBoundaries.from_file(str(project_bounds))
+
+        # Handle --ffrd behavior
+        if ffrd:
+            if output_crs:
+                _report("⚠ ffrd=True overrides output_crs")
+            ffrd_path = get_projection_file("ffrd.prj")
+            if not ffrd_path:
+                raise RuntimeError("FFRD projection file not found")
+
+            ffrd_wkt = ffrd_path.read_text().strip()
+            if not ffrd_wkt:
+                raise ValueError("FFRD projection file is empty")
+
+            output_crs = ffrd_wkt
+            _report("Using FFRD custom projection")
+
+            if no_snap:
+                _report("⚠ ffrd=True requires snapping (no_snap ignored)")
+            no_snap = False
+
+            if cellsize is None:
+                cellsize = 4.0
+                _report("Using FFRD default cellsize: 4")
+
+        # Determine target CRS early (needed for buffering and cellsize conversion)
+        if not output_crs:
+            _report("Auto-detecting target CRS...")
+            source = TNMTileSource()
+            initial_bbox = aoi_obj.bounds()
+            initial_tiles = source.search(initial_bbox)
+            if initial_tiles:
+                output_crs = get_target_utm_for_tiles(initial_tiles)
+                _report(f"Auto-selected target CRS: {output_crs}")
+            else:
+                raise ValueError("No tiles found for CRS auto-detection")
+        else:
+            _report(f"Using target CRS: {output_crs}")
+
+        # Compute default cellsize if not specified (1m converted to output_crs units)
+        effective_cellsize = cellsize
+        if cellsize is None:
+            snapper = Snapper()
+            effective_cellsize = snapper.get_conversion_factor_for_snapping(output_crs)
+            _report(
+                f"Using default cellsize ({'snapping disabled' if no_snap else 'snapping enabled'}): "
+                f"1m in {output_crs} units = {effective_cellsize:.9f}"
+            )
+
+        # Step 1: Query TNM
+        if mode != "process-only":
+            _report("Querying TNM for tiles...")
+            source = TNMTileSource()
+
+            if buffer > 0:
+                try:
+                    buffered_geom_in_output_crs = aoi_obj.buffered_geometry_in_crs(output_crs)
+                    bounds = buffered_geom_in_output_crs.bounds
+                    if any(b == float("inf") or b == float("-inf") for b in bounds):
+                        buffered_bbox = aoi_obj.buffered_bounds(output_crs=output_crs)
+                    else:
+                        import geopandas as gpd
+
+                        gdf = gpd.GeoDataFrame(
+                            [{"geometry": buffered_geom_in_output_crs}], crs=output_crs
+                        )
+                        gdf_wgs84 = gdf.to_crs("EPSG:4326")
+                        buffered_geom_wgs84 = gdf_wgs84.iloc[0].geometry
+                        from .models import BoundingBox
+
+                        buffered_bbox = BoundingBox(
+                            min_x=buffered_geom_wgs84.bounds[0],
+                            min_y=buffered_geom_wgs84.bounds[1],
+                            max_x=buffered_geom_wgs84.bounds[2],
+                            max_y=buffered_geom_wgs84.bounds[3],
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"[{name}] Error computing buffered geometry in output CRS: {e}. "
+                        "Using Web Mercator-buffered bounds."
+                    )
+                    buffered_bbox = aoi_obj.buffered_bounds(output_crs=output_crs)
+            else:
+                buffered_bbox = aoi_obj.bounds()
+
+            all_tiles = source.search(buffered_bbox)
+
+            _report("Filtering tiles by AOI intersection...")
+            filtered_tiles = filter_tiles_by_aoi(all_tiles, aoi_obj, proj_bounds)
+
+            _report("Prioritizing datasets...")
+            prioritized_tiles = prioritize_datasets(filtered_tiles)
+
+            if not prioritized_tiles:
+                return PipelineResult(
+                    name=name, status="failed", error="No tiles found after filtering"
+                )
+
+            _report("Validating coverage...")
+            validate_coverage(prioritized_tiles, aoi_obj, proj_bounds, require_full_coverage)
+
+            dataset_count = len(set(t.dataset_id for t in prioritized_tiles))
+            _report(f"Found {len(prioritized_tiles)} tiles from {dataset_count} datasets")
+
+            manifest = Manifest(aoi_obj, prioritized_tiles, buffer, cellsize)
+            manifest_path = output_path.parent / f"{output_path.stem}.tif.manifest.json"
+            manifest.save(manifest_path)
+            _report(f"Saved manifest to {manifest_path}")
+
+            if mode == "download-only":
+                return PipelineResult(
+                    name=name,
+                    status="success",
+                    manifest_path=manifest_path,
+                    tile_count=len(prioritized_tiles),
+                    dataset_count=dataset_count,
+                )
+        else:
+            _report("Loading manifest for process-only mode...")
+            manifest_path = output_path.parent / f"{output_path.stem}.tif.manifest.json"
+            manifest = Manifest.load(manifest_path)
+            prioritized_tiles = manifest.tiles
+            aoi_obj = manifest.aoi
+            _report(f"Loaded {len(prioritized_tiles)} tiles from manifest")
+
+        dataset_count = len(set(t.dataset_id for t in prioritized_tiles))
+
+        # Step 2: Download tiles
+        if mode != "process-only":
+            _report("Downloading tiles...")
+
+            def _download_progress(completed, total):
+                _report(f"Downloaded {completed}/{total} tiles")
+
+            downloader = TileDownloader(progress_callback=_download_progress)
+            downloaded_tiles = downloader.download(prioritized_tiles)
+            _report(f"Downloaded {len(downloaded_tiles)} tiles")
+
+            for tile in downloaded_tiles:
+                for orig_tile in prioritized_tiles:
+                    if orig_tile.id == tile.id:
+                        orig_tile.local_path = tile.local_path
+        else:
+            downloaded_tiles = prioritized_tiles
+
+        # Step 3: Create VRTs and mosaic
+        _report("Mosaicking tiles...")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mosaicker = VRTMosaicker(Path(tmpdir))
+
+            datasets = defaultdict(list)
+            for tile in downloaded_tiles:
+                datasets[tile.dataset_id].append(tile)
+
+            dataset_vrts = {}
+            for dataset_id, tiles in datasets.items():
+                vrt_path = mosaicker.create_dataset_vrt(dataset_id, tiles)
+                dataset_vrts[dataset_id] = vrt_path
+
+            _report("Merging datasets...")
+            if len(dataset_vrts) == 1:
+                merged_raster = list(dataset_vrts.values())[0]
+            else:
+                merger = DatasetMerger(Path(tmpdir))
+                merged_raster = merger.merge_datasets(
+                    downloaded_tiles,
+                    Path(tmpdir) / "merged.tif",
+                    dataset_vrts=dataset_vrts,
+                )
+
+            # Step 4: Reproject and clip
+            if no_clip:
+                _report("Reprojecting (clipping disabled)...")
+            else:
+                _report("Reprojecting and clipping...")
+
+            reprojector = Reprojector()
+            reprojected = Path(tmpdir) / "reprojected.tif"
+            reprojector.reproject(
+                merged_raster, reprojected, output_crs, cellsize=effective_cellsize
+            )
+
+            if not no_clip:
+                _report("Clipping to AOI with buffer...")
+
+                clipping_geometry = aoi_obj.buffered_geometry_in_crs(output_crs)
+
+                import geopandas as gpd
+
+                gdf_clip = gpd.GeoDataFrame([{"geometry": clipping_geometry}], crs=output_crs)
+                gdf_wgs84 = gdf_clip.to_crs("EPSG:4326")
+                clipping_geometry_wgs84 = gdf_wgs84.iloc[0].geometry
+
+                clipper = Clipper()
+                clipped = Path(tmpdir) / "clipped.tif"
+                clipper.clip(
+                    reprojected,
+                    clipped,
+                    clipping_geometry_wgs84,
+                    geometry_crs="EPSG:4326",
+                )
+                _report("Reprojected and clipped")
+            else:
+                clipped = reprojected
+                _report("Reprojected (unclipped)")
+
+            # Step 5: Snap to grid (optional), convert elevation units, generate COG
+            if not no_snap:
+                _report("Snapping to grid and converting elevation units...")
+
+                snapped = Path(tmpdir) / "snapped.tif"
+                snapper = Snapper()
+                snapper.snap(clipped, snapped, cellsize=effective_cellsize)
+                clipped = snapped
+            else:
+                _report("Converting elevation units and generating Cloud-Optimized GeoTIFF...")
+
+            elevation_converter = ElevationConverter()
+            converted = Path(tmpdir) / "converted.tif"
+            elevation_converter.convert(clipped, converted, output_crs)
+
+            cog_gen = COGGenerator()
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            cog_gen.generate(converted, output_path)
+
+        _report(f"SUCCESS! DEM saved to: {output_path}")
+
+        return PipelineResult(
+            name=name,
+            status="success",
+            output_path=output_path,
+            manifest_path=manifest_path if mode != "process-only" else None,
+            tile_count=len(prioritized_tiles),
+            dataset_count=dataset_count,
+        )
+
+    except Exception as e:
+        logger.error(f"[{name}] Pipeline failed: {e}", exc_info=True)
+        return PipelineResult(name=name, status="failed", error=str(e))

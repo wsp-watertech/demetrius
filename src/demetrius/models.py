@@ -142,11 +142,20 @@ class AOI(BaseModel):
         minx, miny, maxx, maxy = self.geometry.bounds
         return BoundingBox(min_x=minx, min_y=miny, max_x=maxx, max_y=maxy)
 
-    def buffered_bounds(self) -> BoundingBox:
+    def buffered_bounds(self, output_crs: Optional[str] = None) -> BoundingBox:
         """Get bounding box of buffered AOI.
 
-        Buffers in Web Mercator to maintain meter-based distance, then
-        returns bounding box in WGS84.
+        Buffers in Web Mercator to maintain meter-equivalent distance for TNM
+        discovery, then returns bounding box in WGS84. The buffer distance is
+        interpreted as being in output_crs units (or meters if output_crs is
+        not specified).
+
+        Parameters
+        ----------
+        output_crs : str | None
+            The target output CRS. Used to convert buffer from CRS units to
+            meters for Web Mercator projection. If None, buffer is assumed
+            to already be in meters.
 
         Returns
         -------
@@ -156,10 +165,25 @@ class AOI(BaseModel):
         if self.buffer == 0:
             return self.bounds()
 
+        # If output CRS is provided, convert buffer from CRS units to meters
+        buffer_in_meters = self.buffer
+        if output_crs is not None:
+            try:
+                from .snapper import Snapper
+                snapper = Snapper()
+                meters_to_crs_units = snapper.get_conversion_factor_for_snapping(output_crs)
+                # Invert the conversion: if 1 meter = X CRS units, then buffer_in_crs_units / X = meters
+                buffer_in_meters = self.buffer / meters_to_crs_units
+            except Exception as e:
+                logger.warning(
+                    f"Failed to convert buffer from {output_crs} units to meters: {e}. "
+                    "Assuming buffer is already in meters."
+                )
+
         # Reproject to Web Mercator for buffering
         gdf = __import__("geopandas").GeoDataFrame([{"geometry": self.geometry}], crs=self.crs)
         gdf_projected = gdf.to_crs("EPSG:3857")
-        buffered = gdf_projected.iloc[0].geometry.buffer(self.buffer)
+        buffered = gdf_projected.iloc[0].geometry.buffer(buffer_in_meters)
 
         # Reproject back to WGS84
         gdf_buffered = __import__("geopandas").GeoDataFrame(
@@ -200,8 +224,9 @@ class AOI(BaseModel):
     def buffered_geometry_in_crs(self, target_crs: str) -> BaseGeometry:
         """Get buffered AOI geometry in a specific CRS.
 
-        Reprojects to target CRS, buffers with specified distance in that CRS,
-        then returns geometry in target CRS.
+        Reprojects to target CRS, buffers with the specified distance in
+        target CRS units, then returns geometry in target CRS. The buffer
+        is assumed to be in target_crs units.
 
         Parameters
         ----------
@@ -243,7 +268,7 @@ class AOI(BaseModel):
             )
             return self.buffered_geometry()
 
-        # Apply buffer if specified
+        # Apply buffer if specified (buffer is already in target_crs units)
         if self.buffer == 0:
             return geom_projected
 

@@ -73,6 +73,13 @@ def cli():
     help="Disable clipping to AOI (output is full merged/reprojected extent)",
 )
 @click.option(
+    "--no-overviews",
+    is_flag=True,
+    default=False,
+    help="Skip building overview pyramids in the output COG (faster; use if output is "
+    "consumed by tools reading at full resolution rather than viewed interactively)",
+)
+@click.option(
     "--project-bounds",
     required=True,
     type=click.Path(exists=True),
@@ -105,6 +112,7 @@ def process(
     cellsize,
     no_snap,
     no_clip,
+    no_overviews,
     project_bounds,
     require_full_coverage,
     data_dir,
@@ -127,6 +135,7 @@ def process(
         cellsize=cellsize,
         no_snap=no_snap,
         no_clip=no_clip,
+        no_overviews=no_overviews,
         project_bounds=project_bounds,
         require_full_coverage=require_full_coverage,
         data_dir=data_dir,
@@ -265,6 +274,13 @@ def inspect(aoi: str, project_bounds: str) -> None:
     help="Disable clipping to AOI (output is full merged/reprojected extent)",
 )
 @click.option(
+    "--no-overviews",
+    is_flag=True,
+    default=False,
+    help="Skip building overview pyramids in the output COGs (faster; use if output is "
+    "consumed by tools reading at full resolution rather than viewed interactively)",
+)
+@click.option(
     "--project-bounds",
     type=click.Path(exists=True),
     help="Path to project boundaries (GeoParquet, GeoJSON, shapefile, etc.)",
@@ -303,6 +319,7 @@ def batch(
     cellsize,
     no_snap,
     no_clip,
+    no_overviews,
     project_bounds,
     require_full_coverage,
     data_dir,
@@ -326,6 +343,7 @@ def batch(
             cellsize=cellsize,
             no_snap=no_snap,
             no_clip=no_clip,
+            no_overviews=no_overviews,
             project_bounds=project_bounds,
             require_full_coverage=require_full_coverage,
             data_dir=data_dir,

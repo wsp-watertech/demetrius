@@ -111,6 +111,7 @@ def run_pipeline(
     cellsize: Optional[float] = None,
     no_snap: bool = False,
     no_clip: bool = False,
+    no_overviews: bool = False,
     project_bounds: Optional[Union[ProjectBoundaries, str, Path]] = None,
     require_full_coverage: bool = False,
     data_dir: Optional[Union[str, Path]] = None,
@@ -144,6 +145,12 @@ def run_pipeline(
     no_clip : bool, default=False
         Disable clipping to AOI. If True, output is full merged/reprojected extent
         rather than clipped to the buffered AOI.
+    no_overviews : bool, default=False
+        Skip building overview pyramids in the output COG. Overviews speed up
+        zoomed-out rendering in GIS/COG viewers but require additional
+        downsampled reads of the full raster during generation. Useful to
+        disable for outputs primarily consumed by tools reading at full
+        resolution (e.g. hydrologic models).
     project_bounds : ProjectBoundaries | str | Path | None
         Project boundaries instance, or a path to load one from.
     require_full_coverage : bool, default=False
@@ -171,7 +178,6 @@ def run_pipeline(
     try:
         _ensure_tmpdir_valid()
 
-        from .cog import COGGenerator
         from .coverage import validate_coverage
         from .crs import get_target_utm_for_tiles
         from .downloader import TileDownloader
@@ -392,14 +398,19 @@ def run_pipeline(
             else:
                 _report("Merged and reprojected (unclipped)")
 
-            # Step 5: Convert elevation units and generate COG
-            # Note: gdalwarp's -tap flag in merge_reproject_clip already handled snapping
-            # to grid, so the separate snapper step is skipped.
+            # Step 5: Convert elevation units and generate Cloud-Optimized GeoTIFF in one pass
+            # Combines elevation conversion (meters → target CRS units) with COG generation
+            # to avoid materializing an intermediate raster.
             _report("Converting elevation units and generating Cloud-Optimized GeoTIFF...")
 
-            cog_gen = COGGenerator()
+            elevation_converter = ElevationConverter()
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            cog_gen.generate(converted, output_path)
+            elevation_converter.convert_and_generate_cog(
+                clipped,
+                output_path,
+                target_crs=output_crs,
+                generate_overviews=not no_overviews,
+            )
 
         _report(f"SUCCESS! DEM saved to: {output_path}")
 

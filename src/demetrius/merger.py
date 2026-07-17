@@ -334,9 +334,12 @@ class DatasetMerger:
                 "-co",
                 "TILED=YES",
                 "-co",
-                "COMPRESS=DEFLATE",
-                "-co",
                 "BIGTIFF=YES",  # Support files > 4GB
+                # No compression here: this is an ephemeral intermediate raster,
+                # immediately re-read and discarded by the next pipeline stage.
+                # Compressing it costs CPU time on both write and the subsequent
+                # read with no lasting benefit; only the final COG output is
+                # compressed. Requires adequate scratch disk space.
             ]
 
             if snap_to_grid:

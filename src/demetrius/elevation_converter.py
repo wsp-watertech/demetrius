@@ -96,89 +96,97 @@ class ElevationConverter:
         logger.warning(f"Unknown linear unit: {units}. No conversion applied.")
         return 1.0
 
-    def convert(
+    def convert_and_generate_cog(
         self,
         input_raster: Path,
-        output_raster: Path,
+        output_cog: Path,
         target_crs: str,
+        compression: str = "deflate",
+        blocksize: int = 512,
+        generate_overviews: bool = True,
     ) -> Path:
-        """Convert elevation values in raster to target CRS linear units.
+        """Convert elevation values and generate a Cloud-Optimized GeoTIFF in one pass.
 
-        For projected CRS, elevation values should be in the same units as the
-        horizontal coordinates (e.g., meters for UTM, feet for State Plane).
-        This method scales input elevation from meters to the target CRS's
-        linear units.
-
-        Uses gdal_translate with a linear -scale transform (0..1 -> 0..factor)
-        to multiply all pixel values by the conversion factor. NoData pixels
-        are left untouched by GDAL's -scale implementation. This avoids any
-        dependency on GDAL's Python bindings (e.g. gdal_calc.py), which can
-        be broken by numpy ABI mismatches in some environments, and instead
-        relies solely on the pure-CLI gdal_translate binary, matching the
-        rest of this codebase.
-
-        If no conversion is needed (target CRS uses meters), the file is
-        copied as-is.
+        Combines elevation unit conversion (meters → target CRS units) with COG
+        generation to avoid materializing an intermediate raster. Uses
+        gdal_translate with -scale to multiply pixel values by the conversion
+        factor, while simultaneously creating a COG with tiling, compression, and
+        (optionally) overviews.
 
         Parameters
         ----------
         input_raster : Path
             Input raster with elevation values in meters.
-        output_raster : Path
-            Output raster path.
+        output_cog : Path
+            Output COG path.
         target_crs : str
             Target CRS used for unit determination.
+        compression : str, default="deflate"
+            Compression method, such as ``deflate`` or ``lzw``.
+        blocksize : int, default=512
+            Internal tile size in pixels.
+        generate_overviews : bool, default=True
+            Whether to build overview pyramids in the COG. Overviews speed up
+            zoomed-out rendering in GIS/COG viewers but require additional
+            downsampled reads of the full raster, adding meaningful I/O time
+            for large DEMs. Set to False to skip them if the output is
+            primarily consumed by tools that read at full resolution (e.g.
+            hydrologic models) rather than interactively viewed.
 
         Returns
         -------
         Path
-            Path to the converted raster.
+            Path to the generated COG with converted elevation values.
 
         Raises
         ------
         RuntimeError
-            If conversion fails or ``gdal_translate`` is unavailable.
+            If conversion/COG generation fails or ``gdal_translate`` is unavailable.
         """
         factor = self.get_conversion_factor(target_crs)
         units = self.get_linear_units(target_crs)
 
-        logger.info(f"Elevation conversion: multiply by {factor:.6f}")
+        logger.info(f"Converting elevation and generating COG: {output_cog}")
+        logger.info(f"Elevation conversion factor: {factor:.6f}")
         if units:
             logger.info(f"Target units: {units}")
 
-        # If no conversion needed, just copy
-        if abs(factor - 1.0) < 1e-10:
-            logger.info("No elevation conversion needed (target units are meters)")
-            import shutil
-
-            shutil.copy2(input_raster, output_raster)
-            return output_raster
-
-        logger.info(f"Converting elevation from meters to {units or 'target units'}")
-
         try:
-            # Multiply every pixel value by `factor` using a linear rescale
-            # from [0, 1] to [0, factor]. Using a 0..1 source range (rather
-            # than an assumed elevation range like 0..9000) makes this an
-            # exact multiplication regardless of the actual data range,
-            # including negative elevations (e.g. below sea level).
-            # NoData pixels are preserved untouched by GDAL.
             cmd = [
                 "gdal_translate",
+                "-of",
+                "COG",
                 "-ot",
                 "Float32",
-                "-scale",
-                "0",
-                "1",
-                "0",
-                str(factor),
                 "-co",
-                "COMPRESS=DEFLATE",
+                f"COMPRESS={compression.upper()}",
                 "-co",
-                "BIGTIFF=YES",
-                str(input_raster),
-                str(output_raster),
+                f"BLOCKSIZE={blocksize}",
+                "-co",
+                "NUM_THREADS=ALL_CPUS",  # Parallelize compression encoding
+                "-co",
+                "BIGTIFF=YES",  # Support files > 4GB
             ]
+
+            # Floating-point predictor improves both compression ratio and
+            # encode/decode speed for continuous data like elevation. Only
+            # applies to predictor-aware compressors.
+            if compression.lower() in ("deflate", "lzw", "zstd"):
+                cmd.extend(["-co", "PREDICTOR=3"])
+
+            if not generate_overviews:
+                logger.info("Skipping overview pyramid generation (generate_overviews=False)")
+                cmd.extend(["-co", "OVERVIEWS=NONE"])
+
+            # Apply elevation conversion if needed
+            if abs(factor - 1.0) >= 1e-10:
+                logger.info(f"Converting elevation from meters to {units or 'target units'}")
+                # Scale 0..1 to 0..factor (exact multiplication regardless of data range)
+                cmd.extend(["-scale", "0", "1", "0", str(factor)])
+            else:
+                logger.info("No elevation conversion needed (target units are meters)")
+
+            cmd.extend([str(input_raster), str(output_cog)])
 
             result = subprocess.run(
                 cmd,
@@ -189,10 +197,14 @@ class ElevationConverter:
             )
 
             if result.returncode != 0:
-                raise RuntimeError(f"Elevation conversion failed: {result.stderr}")
+                raise RuntimeError(
+                    f"Elevation conversion and COG generation failed: {result.stderr}"
+                )
 
-            logger.debug(f"Converted elevation to {output_raster}")
-            return output_raster
+            logger.info(f"✓ Generated COG with converted elevation: {output_cog}")
+            logger.debug(f"File size: {output_cog.stat().st_size / 1024 / 1024:.1f} MB")
+
+            return output_cog
 
         except FileNotFoundError:
             raise RuntimeError("gdal_translate not found. Please install GDAL command-line tools.")

@@ -6,6 +6,7 @@ the CLI. ``cli.py`` and ``batch.py`` both build on :func:`run_pipeline`.
 """
 
 import logging
+import os
 import tempfile
 from collections import defaultdict
 from dataclasses import dataclass
@@ -21,6 +22,50 @@ ProgressCallback = Callable[[str], None]
 
 PipelineMode = Literal["full", "download-only", "process-only"]
 PipelineStatus = Literal["success", "failed"]
+
+
+def _ensure_tmpdir_valid() -> None:
+    """Validate that TMPDIR (if set) points to an existing, writable directory.
+
+    Python's ``tempfile`` module silently falls back to the system default
+    (e.g. ``/tmp``) if ``TMPDIR`` points to a directory that doesn't exist or
+    isn't writable -- it never raises an error. This means a mistyped or
+    not-yet-created ``TMPDIR`` (a common issue when scratch volumes are
+    mounted after the fact, or under ``nohup``/non-interactive shells) fails
+    silently and large jobs end up writing to a small ``/tmp`` anyway.
+
+    This creates the directory (including parents) if it doesn't exist, and
+    raises a clear error if it can't be created or isn't writable, rather
+    than letting GDAL/tempfile silently fall back elsewhere.
+
+    Raises
+    ------
+    RuntimeError
+        If TMPDIR is set but cannot be created or is not writable.
+    """
+    tmpdir_env = os.environ.get("TMPDIR")
+    if not tmpdir_env:
+        return
+
+    tmpdir_path = Path(tmpdir_env)
+    try:
+        tmpdir_path.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise RuntimeError(
+            f"TMPDIR is set to '{tmpdir_env}' but the directory could not be created: {e}"
+        ) from e
+
+    if not os.access(tmpdir_path, os.W_OK):
+        raise RuntimeError(
+            f"TMPDIR is set to '{tmpdir_env}' but it is not writable. "
+            "tempfile/GDAL will silently fall back to the system default temp "
+            "directory (e.g. /tmp) if this is not fixed, which can exhaust disk "
+            "space on large jobs."
+        )
+
+    # Clear tempfile's cached tempdir so the (possibly newly created) TMPDIR
+    # is picked up even if gettempdir() was already called earlier in this process.
+    tempfile.tempdir = None
 
 
 @dataclass
@@ -123,6 +168,8 @@ def run_pipeline(
             progress_cb(message)
 
     try:
+        _ensure_tmpdir_valid()
+
         from .clipper import Clipper
         from .cog import COGGenerator
         from .coverage import validate_coverage

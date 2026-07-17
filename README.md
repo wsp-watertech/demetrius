@@ -77,6 +77,8 @@ demetrius process --aoi site.shp --output dem.tif --project-bounds boundaries.gp
 
 **Note:** GDAL performs disk space checks before large operations. If you get a "Free disk space available is X GB, whereas Y GB are at least necessary" error despite having adequate space on your temp filesystem, this is likely GDAL's conservative estimate. The check is automatically disabled in demetrius to prevent false failures on properly configured systems.
 
+**Important:** Python's `tempfile` module silently falls back to the system default temp directory (e.g. `/tmp`) if `TMPDIR` points to a directory that doesn't exist yet or isn't writable — it does **not** raise an error. This is easy to miss, especially when running under `nohup` or other non-interactive contexts. demetrius validates `TMPDIR` at pipeline startup and will auto-create it if missing, or fail loudly with a clear error if it cannot be created/written to, rather than silently writing to `/tmp` (which can exhaust disk space on large jobs).
+
 **Performance tip:** For large mosaics or batch processing, using a fast local SSD for temp storage can significantly speed up processing times.
 
 ### Downloaded Tile Storage

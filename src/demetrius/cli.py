@@ -154,14 +154,26 @@ def process(
     type=click.Path(exists=True),
     help="Path to AOI geometry",
 )
-def inspect(aoi: str) -> None:
+@click.option(
+    "--project-bounds",
+    type=click.Path(exists=True),
+    help="Path to project boundaries (optional, for filtering tiles to project scope)",
+)
+def inspect(aoi: str, project_bounds: str) -> None:
     """Inspect available tiles for an AOI without downloading them."""
     try:
         from .coverage import validate_coverage
+        from .project_boundaries import ProjectBoundaries
 
         # Load AOI
         aoi_obj = AOI.from_file(aoi)
         click.echo(f"✓ Loaded AOI from {aoi}")
+
+        # Load project bounds if provided
+        project_bounds_obj = None
+        if project_bounds:
+            project_bounds_obj = ProjectBoundaries.from_file(project_bounds)
+            click.echo(f"✓ Loaded project boundaries from {project_bounds}")
 
         # Query TNM
         click.echo("Querying TNM for tiles...")
@@ -179,10 +191,12 @@ def inspect(aoi: str) -> None:
 
         # Validate coverage
         click.echo("Validating coverage...")
+        require_full = project_bounds_obj is not None
         validate_coverage(
             prioritized_tiles,
             aoi_obj,
-            require_full_coverage=False,
+            project_bounds=project_bounds_obj,
+            require_full_coverage=require_full,
         )
 
         # Generate report

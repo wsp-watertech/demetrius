@@ -1,6 +1,7 @@
 """Priority-based dataset merging with strict overwrite semantics."""
 
 import logging
+import os
 import subprocess
 import tempfile
 from collections import defaultdict
@@ -196,6 +197,9 @@ class DatasetMerger:
                 "gdalwarp",
                 "-overwrite",
                 "-multi",
+                "--config",
+                "CHECK_DISK_FREE_SPACE",
+                "FALSE",
             ] + [str(r) for r in dataset_rasters] + [str(output_raster)]
 
             result = subprocess.run(

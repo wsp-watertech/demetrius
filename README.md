@@ -67,6 +67,16 @@ result = run_pipeline(...)
 
 Both the demetrius library (which uses Python's `tempfile` module) and GDAL (for mosaicking and clipping operations) respect the `TMPDIR` environment variable.
 
+For very large operations, also set `CPL_TMPDIR` to ensure GDAL uses the same temp directory:
+
+```bash
+export TMPDIR=/scratch/tmp
+export CPL_TMPDIR=/scratch/tmp
+demetrius process --aoi site.shp --output dem.tif --project-bounds boundaries.gpkg
+```
+
+**Note:** GDAL performs disk space checks before large operations. If you get a "Free disk space available is X GB, whereas Y GB are at least necessary" error despite having adequate space on your temp filesystem, this is likely GDAL's conservative estimate. The check is automatically disabled in demetrius to prevent false failures on properly configured systems.
+
 **Performance tip:** For large mosaics or batch processing, using a fast local SSD for temp storage can significantly speed up processing times.
 
 ### Downloaded Tile Storage

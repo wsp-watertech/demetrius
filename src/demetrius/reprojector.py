@@ -85,6 +85,9 @@ class Reprojector:
                 "COMPRESS=DEFLATE",
                 "-co",
                 "BLOCKSIZE=512",
+                "--config",
+                "CHECK_DISK_FREE_SPACE",
+                "FALSE",
                 "-overwrite",
             ]
 

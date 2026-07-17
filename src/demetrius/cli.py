@@ -80,9 +80,9 @@ def cli():
 )
 @click.option(
     "--require-full-coverage",
+    is_flag=True,
     default=False,
-    type=bool,
-    help="Require full coverage of original AOI",
+    help="Require full coverage of original AOI (default: coverage is optional)",
 )
 @click.option(
     "--mode",
@@ -107,35 +107,6 @@ def process(
 
     Run the full demetrius pipeline, or selected download-only or
     process-only stages, for the provided area of interest.
-
-    Parameters
-    ----------
-    aoi : str
-        Path to the AOI geometry file.
-    output : str
-        Output path for the generated Cloud-Optimized GeoTIFF.
-    output_crs : str | None
-        Target coordinate reference system for the output raster.
-    ffrd : bool
-        Whether to use the bundled FFRD projection and snapping defaults.
-    buffer : int
-        Buffer distance in output CRS units for tile discovery and clipping.
-    cellsize : float | None
-        Output cell size in target CRS units.
-    no_snap : bool
-        Whether grid snapping should be skipped.
-    project_bounds : str
-        Path to the project boundaries dataset.
-    require_full_coverage : bool
-        Whether the original AOI must be fully covered by the selected data.
-    mode : str
-        Processing mode to run: ``full``, ``download-only``, or
-        ``process-only``.
-
-    Returns
-    -------
-    None
-        This command writes output files and reports progress to the CLI.
     """
     from .pipeline import run_pipeline
 
@@ -176,18 +147,7 @@ def process(
     help="Path to AOI geometry",
 )
 def inspect(aoi: str) -> None:
-    """Inspect available tiles for an AOI without downloading them.
-
-    Parameters
-    ----------
-    aoi : str
-        Path to the AOI geometry file.
-
-    Returns
-    -------
-    None
-        This command prints a tile inspection summary to the CLI.
-    """
+    """Inspect available tiles for an AOI without downloading them."""
     try:
         from .coverage import validate_coverage
 
@@ -289,9 +249,9 @@ def inspect(aoi: str) -> None:
 )
 @click.option(
     "--require-full-coverage",
+    is_flag=True,
     default=False,
-    type=bool,
-    help="Require full coverage of each AOI",
+    help="Require full coverage of each AOI (default: coverage is optional)",
 )
 @click.option(
     "--mode",
@@ -322,39 +282,7 @@ def batch(
 ):
     """Batch-process DEMs for every AOI polygon in an input file.
 
-    Parameters
-    ----------
-    input_path : str
-        Path to a vector file containing AOI polygons.
-    name_field : str
-        Column used to name each output DEM.
-    output_dir : str
-        Output directory for generated DEMs and manifests.
-    output_crs : str | None
-        Target CRS for every AOI. Ignored if ``ffrd`` is set.
-    ffrd : bool
-        Whether to use the bundled FFRD projection for every AOI.
-    buffer : float
-        Buffer distance in output CRS units for tile discovery and clipping.
-    cellsize : float | None
-        Output cell size in target CRS units.
-    no_snap : bool
-        Whether grid snapping should be skipped.
-    no_clip : bool
-        Whether clipping to AOI should be skipped.
-    project_bounds : str | None
-        Path to the project boundaries dataset, reused across all AOIs.
-    require_full_coverage : bool
-        Whether each AOI must be fully covered by the selected data.
-    mode : str
-        Processing mode to run for each AOI.
-    max_workers : int
-        Number of AOIs to process concurrently.
-
-    Returns
-    -------
-    None
-        This command writes output files and reports progress to the CLI.
+    Each AOI is named using a user-specified column from the input file.
     """
     from .batch import batch_process
 

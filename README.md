@@ -41,6 +41,34 @@ pip install demetrius
 - **Python**: 3.12 or higher
 - **GDAL**: Command-line tools (`gdalbuildvrt`, `gdalwarp`, `gdal_translate`)
 
+## Configuration
+
+### Temporary File Storage
+
+By default, demetrius and GDAL store temporary files in the system temp directory (`/tmp` on Linux/macOS, `%TEMP%` on Windows). To use a different location (e.g., a faster SSD, a local ramdisk, or a directory with more space):
+
+**Set the `TMPDIR` environment variable before running demetrius:**
+
+```bash
+# Use a custom temp directory
+export TMPDIR=/fast/ssd/temp
+demetrius process --aoi site.shp --output dem.tif --project-bounds boundaries.gpkg
+```
+
+**Or in Python:**
+
+```python
+import os
+os.environ["TMPDIR"] = "/fast/ssd/temp"
+
+from demetrius.pipeline import run_pipeline
+result = run_pipeline(...)
+```
+
+Both the demetrius library (which uses Python's `tempfile` module) and GDAL (for mosaicking and clipping operations) respect the `TMPDIR` environment variable.
+
+**Performance tip:** For large mosaics or batch processing, using a fast local SSD for temp storage can significantly speed up processing times.
+
 ## Quick Start
 
 ### Basic Usage

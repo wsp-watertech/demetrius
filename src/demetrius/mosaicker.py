@@ -10,6 +10,75 @@ from .models import Tile
 logger = logging.getLogger(__name__)
 
 
+def materialize_vrt(vrt_path: Path, output_path: Path) -> Path:
+    """Flatten a VRT mosaic into a single materialized GeoTIFF.
+
+    Multi-tile VRTs are cheap to build but expensive to read repeatedly:
+    every block read must resolve and open whichever underlying tile
+    file(s) intersect that block. Downstream operations (gdalwarp merges,
+    reprojection) that touch such a VRT pay that cost across its full
+    extent. Materializing once, up front, turns later reads into a single
+    well-organized file instead of many small ones.
+
+    Parameters
+    ----------
+    vrt_path : Path
+        Path to a raster, either a ``.vrt`` mosaic of many tiles or an
+        already-materialized single file.
+    output_path : Path
+        Destination path for the materialized GeoTIFF. Ignored if
+        ``vrt_path`` is not a VRT.
+
+    Returns
+    -------
+    Path
+        Path to a materialized (non-VRT) raster. If ``vrt_path`` was
+        already a real raster file (e.g. a single tile), it is returned
+        unchanged.
+
+    Raises
+    ------
+    ValueError
+        If materialization fails.
+    RuntimeError
+        If ``gdal_translate`` is not available.
+    """
+    vrt_path = Path(vrt_path)
+    if vrt_path.suffix.lower() != ".vrt":
+        return vrt_path
+
+    logger.info(f"Materializing VRT {vrt_path} to {output_path}")
+
+    try:
+        cmd = [
+            "gdal_translate",
+            "-co",
+            "TILED=YES",
+            "-co",
+            "COMPRESS=DEFLATE",
+            "-co",
+            "BIGTIFF=IF_SAFER",
+            str(vrt_path),
+            str(output_path),
+        ]
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        if result.returncode != 0:
+            raise ValueError(f"gdal_translate materialization failed: {result.stderr}")
+
+        logger.debug(f"Materialized: {output_path}")
+        return output_path
+
+    except FileNotFoundError:
+        raise RuntimeError("gdal_translate not found. Please install GDAL command-line tools.")
+
+
 class VRTMosaicker:
     """Create Virtual Raster (VRT) files for efficient tile mosaicking."""
 

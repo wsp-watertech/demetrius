@@ -69,6 +69,8 @@ class TNMTileSource(TileSource):
         offset = 0
         page_size = DEFAULT_PAGE_SIZE
 
+        total = None  # Will be determined from first response with valid total
+
         while True:
             params = {
                 "bbox": f"{aoi_bbox.min_x},{aoi_bbox.min_y},{aoi_bbox.max_x},{aoi_bbox.max_y}",
@@ -87,8 +89,18 @@ class TNMTileSource(TileSource):
             except ValueError as e:
                 raise ValueError(f"TNM API returned invalid JSON: {e}") from e
 
-            total = data.get("total", 0)
+            response_total = data.get("total", 0)
             items = data.get("items", [])
+
+            # Use first valid (non-zero) total from any response
+            if total is None and response_total > 0:
+                total = response_total
+                logger.debug(f"Total items from TNM API: {total}")
+            elif total is None and response_total == 0:
+                logger.debug(
+                    f"TNM API returned total=0 (possibly transient API state); "
+                    f"continuing pagination until empty response"
+                )
 
             logger.debug(f"Fetched {len(items)} items (offset={offset}, total={total})")
 
@@ -102,12 +114,21 @@ class TNMTileSource(TileSource):
                     logger.warning(f"Skipped TNM item: {e}")
                     continue
 
-            # Check if we've fetched all items
-            if offset + len(items) >= total or not items:
+            # Stop pagination when we get zero items (empty page)
+            # OR when we've reached the declared total (if total is known and valid)
+            if not items:
+                logger.debug("Received empty page, stopping pagination")
+                break
+            
+            if total is not None and total > 0 and offset + len(items) >= total:
+                logger.debug(f"Reached declared total ({total}), stopping pagination")
                 break
 
             offset += page_size
 
+        if total is None or total == 0:
+            total = len(tiles)  # Fallback to actual count if API never provided valid total
+        
         logger.info(f"Found {len(tiles)} tiles from TNM (total {total} items)")
         return tiles
 

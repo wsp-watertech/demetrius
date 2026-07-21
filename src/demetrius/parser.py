@@ -42,13 +42,32 @@ def parse_dataset_and_tile_ids(title: str, url: Optional[str] = None) -> tuple[s
 
     # Take first "word" (space/underscore separated) that looks like dataset ID
     dataset_match = re.search(r"([A-Z0-9][A-Za-z0-9_\-\.]*)", remaining)
-    if not dataset_match:
-        # Fallback: try extracting from URL
-        if url:
-            return _parse_from_url(url), tile_id
-        raise ValueError(f"Could not extract dataset_id from title: {title}")
+    dataset_id = None
+    if dataset_match:
+        dataset_id = dataset_match.group(1)
 
-    dataset_id = dataset_match.group(1)
+    # Try URL fallback if dataset_id looks too generic:
+    # - Single/two letter codes (like "TN", "PA")
+    # - Single word without underscore or numbers (less descriptive)
+    if url and dataset_id and len(dataset_id) <= 2:
+        try:
+            url_dataset_id = _parse_from_url(url)
+            # Use URL if it's more specific (contains underscores, more descriptive)
+            if "_" in url_dataset_id or len(url_dataset_id) > len(dataset_id):
+                dataset_id = url_dataset_id
+        except ValueError:
+            # If URL parsing fails, keep what we have from title
+            pass
+    elif not dataset_id:
+        # No dataset_id found in title, try URL
+        if url:
+            try:
+                dataset_id = _parse_from_url(url)
+            except ValueError:
+                raise ValueError(f"Could not extract dataset_id from title: {title}")
+        else:
+            raise ValueError(f"Could not extract dataset_id from title: {title}")
+
     return dataset_id, tile_id
 
 
@@ -59,6 +78,7 @@ def _parse_from_url(url: str) -> str:
     -----
     - https://cloud.sdsc.edu/v1/AUTH_.../DEM/.../<dataset_id>_<tile_id>.tif
     - https://tnmaccess.nationalmap.gov/.../DEM_<dataset_id>.tif
+    - https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1m/Projects/<dataset_id>/TIFF/...
 
     Parameters
     ----------
@@ -75,6 +95,13 @@ def _parse_from_url(url: str) -> str:
     ValueError
         If the dataset identifier cannot be extracted from the URL.
     """
+    # Try to extract from path: .../Projects/<dataset_id>/TIFF/...
+    match = re.search(r"/Projects/([^/]+)/", url)
+    if match:
+        dataset_id = match.group(1)
+        if dataset_id and len(dataset_id) >= 3:
+            return dataset_id
+
     # Extract filename
     filename = url.split("/")[-1]
 

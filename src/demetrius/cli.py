@@ -168,7 +168,13 @@ def process(
     type=click.Path(exists=True),
     help="Path to project boundaries (optional, for filtering tiles to project scope)",
 )
-def inspect(aoi: str, project_bounds: str) -> None:
+@click.option(
+    "--verbose",
+    is_flag=True,
+    default=False,
+    help="Show detailed per-tile list grouped by project (in addition to summary)",
+)
+def inspect(aoi: str, project_bounds: str, verbose: bool) -> None:
     """Inspect available tiles for an AOI without downloading them."""
     try:
         from .coverage import validate_coverage
@@ -212,6 +218,11 @@ def inspect(aoi: str, project_bounds: str) -> None:
         report = InspectionReport(prioritized_tiles, aoi_obj)
         click.echo("")
         click.echo(report.summary())
+
+        # Output verbose details if requested
+        if verbose:
+            click.echo("")
+            click.echo(report.verbose_details())
 
     except Exception as e:
         click.echo(f"✗ Error: {e}", err=True)

@@ -144,7 +144,7 @@ class VRTMosaicker:
         logger.debug(tiles)
 
         try:
-            cmd = ["gdalbuildvrt", str(vrt_path)] + tile_paths
+            cmd = ["gdalbuildvrt", "-allow_projection_difference", str(vrt_path)] + tile_paths
             logger.debug(f"Running command: {' '.join(cmd)}")
             result = subprocess.run(
                 cmd,
@@ -201,7 +201,7 @@ class VRTMosaicker:
         vrt_paths = list(dataset_vrts.values())
 
         try:
-            cmd = ["gdalbuildvrt", str(output_vrt)] + [str(p) for p in vrt_paths]
+            cmd = ["gdalbuildvrt", "-allow_projection_difference", str(output_vrt)] + [str(p) for p in vrt_paths]
             result = subprocess.run(
                 cmd,
                 capture_output=True,

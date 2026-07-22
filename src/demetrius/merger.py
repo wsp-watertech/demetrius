@@ -230,7 +230,7 @@ class DatasetMerger:
         vrt_path = Path(tempfile.gettempdir()) / f"dataset_{dataset_id}.vrt"
         tile_paths = [str(Path(t.local_path)) for t in tiles]
 
-        cmd = ["gdalbuildvrt", "-quiet", str(vrt_path)] + tile_paths
+        cmd = ["gdalbuildvrt", "-quiet", "-allow_projection_difference", str(vrt_path)] + tile_paths
         subprocess.run(cmd, check=True, capture_output=True, env=os.environ.copy())
 
         return vrt_path

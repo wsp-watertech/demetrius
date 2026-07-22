@@ -24,7 +24,7 @@ def get_crs_from_raster(raster_path: str) -> Optional[str]:
     Returns
     -------
     str | None
-        CRS string such as ``"EPSG:32618"`` or None if detection fails.
+        CRS string such as ``"EPSG:26917"`` or None if detection fails.
     """
     try:
         result = subprocess.run(
@@ -47,35 +47,17 @@ def get_crs_from_raster(raster_path: str) -> Optional[str]:
         if "coordinateSystem" in info:
             coord_sys = info["coordinateSystem"]
             
-            # Try to find authority/EPSG code
             if "wkt" in coord_sys:
                 wkt = coord_sys["wkt"]
-                # Parse WKT for EPSG code
-                # Format: ...AUTHORITY["EPSG","32618"]]
+                
+                # Try modern WKT format: ID["EPSG",26917]
+                # Get the last occurrence (the main CRS ID, not sub-component IDs)
+                matches = list(re.finditer(r'ID\["EPSG",(\d{5})\]', wkt))
+                if matches:
+                    return f"EPSG:{matches[-1].group(1)}"
+                
+                # Try old WKT format: AUTHORITY["EPSG","32618"]
                 match = re.search(r'AUTHORITY\["EPSG","(\d{5})"\]', wkt)
-                if match:
-                    return f"EPSG:{match.group(1)}"
-            
-            # Try alternate location
-            if "authority" in coord_sys:
-                auth = coord_sys["authority"]
-                if auth and len(auth) >= 2:
-                    return f"{auth[0]}:{auth[1]}"
-
-        # Fallback: try to parse WKT from standard gdalinfo output
-        result = subprocess.run(
-            ["gdalinfo", str(raster_path)],
-            capture_output=True,
-            text=True,
-            check=False,
-            env=os.environ.copy(),
-            timeout=10,
-        )
-
-        if result.returncode == 0:
-            for line in result.stdout.split('\n'):
-                # Look for AUTHORITY line
-                match = re.search(r'AUTHORITY\["EPSG","(\d{5})"\]', line)
                 if match:
                     return f"EPSG:{match.group(1)}"
 

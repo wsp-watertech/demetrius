@@ -244,3 +244,48 @@ class ProjectBoundaries:
         """
         coverage = self.get_coverage_for_geometry(geometry)
         return not coverage.is_empty
+
+    def intersects_coverage_with_buffer(self, geometry: BaseGeometry, buffer_meters: float = 0) -> bool:
+        """Check if geometry intersects any project boundaries, optionally expanded by a buffer.
+
+        When a buffer is provided, project boundaries are expanded by that distance
+        before checking intersection. This ensures that tiles just outside project
+        boundaries (but within the buffer zone) are still included.
+
+        Parameters
+        ----------
+        geometry : BaseGeometry
+            Query geometry (typically a tile).
+        buffer_meters : float, default=0
+            Buffer distance in meters to expand project boundaries. If 0, behaves
+            identically to :meth:`intersects_coverage`.
+
+        Returns
+        -------
+        bool
+            ``True`` if geometry intersects project boundaries (optionally buffered).
+        """
+        if buffer_meters == 0:
+            return self.intersects_coverage(geometry)
+
+        import geopandas as gpd
+
+        # Expand project boundaries by buffer distance
+        gdf_buffered = self.gdf.copy()
+
+        # Buffer in Web Mercator for global consistency
+        gdf_mercator = gdf_buffered.to_crs("EPSG:3857")
+        gdf_mercator["geometry"] = gdf_mercator.geometry.buffer(buffer_meters)
+        gdf_buffered = gdf_mercator.to_crs("EPSG:4326")
+
+        # Create temporary coverage with buffered boundaries
+        from shapely.geometry import GeometryCollection
+
+        candidates = self.spatial_index.intersection(geometry.bounds)
+        intersecting = gdf_buffered.iloc[list(candidates)]
+
+        if intersecting.empty:
+            return False
+
+        buffered_coverage = intersecting.geometry.unary_union
+        return geometry.intersects(buffered_coverage)

@@ -19,7 +19,8 @@ def filter_tiles_by_aoi(
     """Filter tiles to only those intersecting the buffered AOI with actual coverage.
 
     If project_bounds is provided, only keeps tiles that intersect actual project
-    coverage areas (filling coverage gaps). Otherwise, uses simple bbox intersection.
+    coverage areas (filling coverage gaps). The buffer from the AOI is also applied
+    to the project boundaries to ensure tiles within the buffer zone are included.
 
     Parameters
     ----------
@@ -34,7 +35,7 @@ def filter_tiles_by_aoi(
     -------
     list[Tile]
         Tiles that intersect the buffered AOI and, when project boundaries are
-        provided, have actual coverage.
+        provided, have actual coverage (within the buffered project area).
     """
     logger.info(f"Filtering {len(tiles)} tiles by AOI intersection")
 
@@ -51,8 +52,9 @@ def filter_tiles_by_aoi(
             continue
 
         # If project boundaries provided, check for actual coverage
+        # Apply the same buffer to the project boundaries for consistency
         if project_bounds is not None:
-            if not project_bounds.intersects_coverage(tile_polygon):
+            if not project_bounds.intersects_coverage_with_buffer(tile_polygon, aoi.buffer):
                 logger.debug(f"Discarded tile {tile.tile_id} (no project coverage in tile area)")
                 continue
             logger.debug(f"Kept tile {tile.tile_id} (intersects buffered AOI and coverage)")

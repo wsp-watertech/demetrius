@@ -100,14 +100,14 @@ class VRTMosaicker:
         self.working_dir = Path(working_dir)
         self.working_dir.mkdir(parents=True, exist_ok=True)
 
-    def create_dataset_vrt(self, dataset_id: str, tiles: Sequence[Tile]) -> Path:
+    def create_dataset_vrt(self, dataset_id: str, tiles: Sequence[Tile], crs: Optional[str] = None) -> Path:
         """Create a VRT file for all tiles in a dataset.
 
         Uses gdalbuildvrt for efficient virtual mosaicking without
         loading data into memory.
 
-        Note: Tiles should be from the same UTM zone. The pipeline pre-splits
-        tiles by zone to avoid cross-zone reprojection overhead.
+        Note: Tiles should be from the same CRS. The pipeline pre-splits
+        tiles by CRS to avoid cross-projection reprojection overhead.
 
         Parameters
         ----------
@@ -115,7 +115,10 @@ class VRTMosaicker:
             Dataset identifier.
         tiles : Sequence[Tile]
             Tiles in this dataset. All must have ``local_path`` set and should
-            be from the same UTM zone.
+            be from the same CRS.
+        crs : str | None, optional
+            CRS identifier (e.g., "EPSG:26917"). If provided, included in VRT
+            filename to distinguish VRTs for the same dataset in different CRS.
 
         Returns
         -------
@@ -139,12 +142,14 @@ class VRTMosaicker:
             if not Path(tile.local_path).exists():
                 raise ValueError(f"Tile {tile.id} file not found: {tile.local_path}")
 
-        vrt_path = self.working_dir / f"dataset_{dataset_id}.vrt"
+        # Include CRS in filename if provided to distinguish multi-CRS datasets
+        crs_suffix = f"_{crs.replace(':', '_')}" if crs and crs != "UNKNOWN" else ""
+        vrt_path = self.working_dir / f"dataset_{dataset_id}{crs_suffix}.vrt"
 
         # Get tile paths
         tile_paths = [str(tile.local_path) for tile in tiles]
 
-        logger.info(f"Creating VRT for dataset {dataset_id} with {len(tiles)} tiles")
+        logger.info(f"Creating VRT for dataset {dataset_id}{crs_suffix} with {len(tiles)} tiles")
         logger.debug(tiles)
 
         try:

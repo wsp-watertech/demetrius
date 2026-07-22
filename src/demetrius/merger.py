@@ -224,13 +224,13 @@ class DatasetMerger:
                         logger.debug(f"Using pre-created VRT for {dataset_id}")
 
                 if vrt_path is None:
-                    vrt_path = self._prepare_dataset(dataset_id, dataset_crs_tiles)
+                    vrt_path = self._prepare_dataset(dataset_id, dataset_crs_tiles, crs=crs)
 
                 dataset_rasters.append(vrt_path)
 
         return dataset_rasters
 
-    def _prepare_dataset(self, dataset_id: str, tiles: Sequence[Tile]) -> Path:
+    def _prepare_dataset(self, dataset_id: str, tiles: Sequence[Tile], crs: Optional[str] = None) -> Path:
         """Prepare dataset for merging (VRT of all tiles or single tile).
 
         Parameters
@@ -239,6 +239,9 @@ class DatasetMerger:
             Dataset identifier.
         tiles : Sequence[Tile]
             Tiles in the dataset (all within same CRS).
+        crs : str | None, optional
+            CRS identifier (e.g., "EPSG:26917"). If provided, included in VRT
+            filename to distinguish VRTs for the same dataset in different CRS.
 
         Returns
         -------
@@ -258,7 +261,9 @@ class DatasetMerger:
             return Path(tiles[0].local_path)
 
         # Multiple tiles: create VRT
-        vrt_path = Path(tempfile.gettempdir()) / f"dataset_{dataset_id}.vrt"
+        # Include CRS in filename if provided to distinguish multi-CRS datasets
+        crs_suffix = f"_{crs.replace(':', '_')}" if crs and crs != "UNKNOWN" else ""
+        vrt_path = Path(tempfile.gettempdir()) / f"dataset_{dataset_id}{crs_suffix}.vrt"
         tile_paths = [str(Path(t.local_path)) for t in tiles]
 
         cmd = ["gdalbuildvrt", "-quiet", str(vrt_path)] + tile_paths

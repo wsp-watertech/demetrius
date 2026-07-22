@@ -368,7 +368,7 @@ def run_pipeline(
 
             dataset_vrts = {}
             for (dataset_id, crs), tiles in datasets_by_crs.items():
-                vrt_path = mosaicker.create_dataset_vrt(dataset_id, tiles)
+                vrt_path = mosaicker.create_dataset_vrt(dataset_id, tiles, crs=crs)
                 # Store with (dataset_id, crs) key for CRS-specific lookup
                 dataset_vrts[(dataset_id, crs)] = vrt_path
 

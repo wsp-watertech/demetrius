@@ -103,6 +103,12 @@ def cli():
     type=click.Choice(["full", "download-only", "process-only"]),
     help="Processing mode",
 )
+@click.option(
+    "--debug",
+    is_flag=True,
+    default=False,
+    help="Enable debug logging",
+)
 def process(
     aoi,
     output,
@@ -117,6 +123,7 @@ def process(
     require_full_coverage,
     data_dir,
     mode,
+    debug,
 ):
     """Process the DEM workflow.
 
@@ -124,6 +131,10 @@ def process(
     process-only stages, for the provided area of interest.
     """
     from .pipeline import run_pipeline
+
+    # Set logging level if debug is enabled
+    if debug:
+        logging.getLogger().setLevel(logging.DEBUG)
 
     result = run_pipeline(
         aoi,
@@ -320,6 +331,12 @@ def inspect(aoi: str, project_bounds: str, verbose: bool) -> None:
     type=int,
     help="Number of AOIs to process concurrently (default: 1, sequential)",
 )
+@click.option(
+    "--debug",
+    is_flag=True,
+    default=False,
+    help="Enable debug logging",
+)
 def batch(
     input_path,
     name_field,
@@ -336,12 +353,17 @@ def batch(
     data_dir,
     mode,
     max_workers,
+    debug,
 ):
     """Batch-process DEMs for every AOI polygon in an input file.
 
     Each AOI is named using a user-specified column from the input file.
     """
     from .batch import batch_process
+
+    # Set logging level if debug is enabled
+    if debug:
+        logging.getLogger().setLevel(logging.DEBUG)
 
     try:
         results = batch_process(

@@ -354,14 +354,23 @@ def run_pipeline(
         with tempfile.TemporaryDirectory() as tmpdir:
             mosaicker = VRTMosaicker(Path(tmpdir))
 
-            datasets = defaultdict(list)
+            # Group tiles by (dataset_id, crs) to create separate VRTs for each projection
+            from .crs import get_crs_from_raster, extract_utm_zone
+
+            datasets_by_crs: dict[tuple[str, str], list[Tile]] = defaultdict(list)
             for tile in downloaded_tiles:
-                datasets[tile.dataset_id].append(tile)
+                # Get the actual CRS from the downloaded tile file
+                tile_crs = get_crs_from_raster(str(tile.local_path))
+                if tile_crs is None:
+                    logger.warning(f"Could not detect CRS from {tile.id}, skipping grouping")
+                    tile_crs = "UNKNOWN"
+                datasets_by_crs[(tile.dataset_id, tile_crs)].append(tile)
 
             dataset_vrts = {}
-            for dataset_id, tiles in datasets.items():
+            for (dataset_id, crs), tiles in datasets_by_crs.items():
                 vrt_path = mosaicker.create_dataset_vrt(dataset_id, tiles)
-                dataset_vrts[dataset_id] = vrt_path
+                # Store with (dataset_id, crs) key for CRS-specific lookup
+                dataset_vrts[(dataset_id, crs)] = vrt_path
 
             # Step 4: Merge (priority overwrite), reproject, clip, and optionally
             # snap to grid in a single gdalwarp pass. Combining these avoids

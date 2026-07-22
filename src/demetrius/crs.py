@@ -1,12 +1,61 @@
 """Multi-CRS handling and detection."""
 
 import logging
+import os
 import re
+import subprocess
+from pathlib import Path
 from typing import Optional, Sequence
 
 from .models import Tile
 
 logger = logging.getLogger(__name__)
+
+
+def get_crs_from_raster(raster_path: str) -> Optional[str]:
+    """Extract CRS from a raster file using gdalinfo.
+
+    Parameters
+    ----------
+    raster_path : str
+        Path to the raster file.
+
+    Returns
+    -------
+    str | None
+        CRS string such as ``"EPSG:32618"`` or None if detection fails.
+    """
+    try:
+        result = subprocess.run(
+            ["gdalinfo", str(raster_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=os.environ.copy(),
+        )
+
+        if result.returncode != 0:
+            logger.debug(f"gdalinfo failed for {raster_path}: {result.stderr}")
+            return None
+
+        # Look for EPSG code in gdalinfo output
+        match = re.search(r"EPSG[\":]?\s*(\d{5})", result.stdout)
+        if match:
+            return f"EPSG:{match.group(1)}"
+
+        # Try to extract from PROJCS or similar
+        for line in result.stdout.split('\n'):
+            if 'PROJCS' in line or 'Authority' in line:
+                logger.debug(f"CRS info from {raster_path}: {line}")
+
+        return None
+
+    except FileNotFoundError:
+        logger.debug("gdalinfo not found")
+        return None
+    except Exception as e:
+        logger.debug(f"Failed to detect CRS from {raster_path}: {e}")
+        return None
 
 
 def extract_utm_zone(crs: Optional[str]) -> Optional[int]:

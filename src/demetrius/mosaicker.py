@@ -106,12 +106,16 @@ class VRTMosaicker:
         Uses gdalbuildvrt for efficient virtual mosaicking without
         loading data into memory.
 
+        Note: Tiles should be from the same UTM zone. The pipeline pre-splits
+        tiles by zone to avoid cross-zone reprojection overhead.
+
         Parameters
         ----------
         dataset_id : str
             Dataset identifier.
         tiles : Sequence[Tile]
-            Tiles in this dataset. All must have ``local_path`` set.
+            Tiles in this dataset. All must have ``local_path`` set and should
+            be from the same UTM zone.
 
         Returns
         -------
@@ -144,7 +148,7 @@ class VRTMosaicker:
         logger.debug(tiles)
 
         try:
-            cmd = ["gdalbuildvrt", "-allow_projection_difference", str(vrt_path)] + tile_paths
+            cmd = ["gdalbuildvrt", str(vrt_path)] + tile_paths
             logger.debug(f"Running command: {' '.join(cmd)}")
             result = subprocess.run(
                 cmd,

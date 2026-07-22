@@ -1,5 +1,6 @@
 """Multi-CRS handling and detection."""
 
+import json
 import logging
 import os
 import re
@@ -27,29 +28,65 @@ def get_crs_from_raster(raster_path: str) -> Optional[str]:
     """
     try:
         result = subprocess.run(
-            ["gdalinfo", str(raster_path)],
+            ["gdalinfo", "-json", str(raster_path)],
             capture_output=True,
             text=True,
             check=False,
             env=os.environ.copy(),
+            timeout=10,
         )
 
         if result.returncode != 0:
             logger.debug(f"gdalinfo failed for {raster_path}: {result.stderr}")
             return None
 
-        # Look for EPSG code in gdalinfo output
-        match = re.search(r"EPSG[\":]?\s*(\d{5})", result.stdout)
-        if match:
-            return f"EPSG:{match.group(1)}"
+        # Parse JSON output
+        info = json.loads(result.stdout)
 
-        # Try to extract from PROJCS or similar
-        for line in result.stdout.split('\n'):
-            if 'PROJCS' in line or 'Authority' in line:
-                logger.debug(f"CRS info from {raster_path}: {line}")
+        # Look for EPSG code in coordinateSystem
+        if "coordinateSystem" in info:
+            coord_sys = info["coordinateSystem"]
+            
+            # Try to find authority/EPSG code
+            if "wkt" in coord_sys:
+                wkt = coord_sys["wkt"]
+                # Parse WKT for EPSG code
+                # Format: ...AUTHORITY["EPSG","32618"]]
+                match = re.search(r'AUTHORITY\["EPSG","(\d{5})"\]', wkt)
+                if match:
+                    return f"EPSG:{match.group(1)}"
+            
+            # Try alternate location
+            if "authority" in coord_sys:
+                auth = coord_sys["authority"]
+                if auth and len(auth) >= 2:
+                    return f"{auth[0]}:{auth[1]}"
+
+        # Fallback: try to parse WKT from standard gdalinfo output
+        result = subprocess.run(
+            ["gdalinfo", str(raster_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=os.environ.copy(),
+            timeout=10,
+        )
+
+        if result.returncode == 0:
+            for line in result.stdout.split('\n'):
+                # Look for AUTHORITY line
+                match = re.search(r'AUTHORITY\["EPSG","(\d{5})"\]', line)
+                if match:
+                    return f"EPSG:{match.group(1)}"
 
         return None
 
+    except json.JSONDecodeError:
+        logger.debug(f"Failed to parse gdalinfo JSON for {raster_path}")
+        return None
+    except subprocess.TimeoutExpired:
+        logger.debug(f"gdalinfo timed out for {raster_path}")
+        return None
     except FileNotFoundError:
         logger.debug("gdalinfo not found")
         return None

@@ -85,6 +85,7 @@ class ProjectBoundaries:
 
         self.gdf = gdf.reset_index(drop=True)
         self.spatial_index = self.gdf.sindex
+        self._buffered_cache: dict[float, "BaseGeometry"] = {}  # Cache for buffered boundaries
         logger.info(f"Loaded {len(self.gdf)} project boundaries")
 
     @classmethod
@@ -268,24 +269,21 @@ class ProjectBoundaries:
         if buffer_meters == 0:
             return self.intersects_coverage(geometry)
 
+        # Check cache first
+        if buffer_meters in self._buffered_cache:
+            buffered_coverage = self._buffered_cache[buffer_meters]
+            return geometry.intersects(buffered_coverage)
+
         import geopandas as gpd
 
-        # Expand project boundaries by buffer distance
-        gdf_buffered = self.gdf.copy()
+        # Compute and cache the buffered boundaries (only done once per buffer distance)
+        gdf_mercator = self.gdf.to_crs("EPSG:3857")
+        gdf_mercator_buffered = gdf_mercator.copy()
+        gdf_mercator_buffered["geometry"] = gdf_mercator.geometry.buffer(buffer_meters)
+        gdf_buffered = gdf_mercator_buffered.to_crs("EPSG:4326")
 
-        # Buffer in Web Mercator for global consistency
-        gdf_mercator = gdf_buffered.to_crs("EPSG:3857")
-        gdf_mercator["geometry"] = gdf_mercator.geometry.buffer(buffer_meters)
-        gdf_buffered = gdf_mercator.to_crs("EPSG:4326")
+        # Compute union once and cache it
+        buffered_coverage = gdf_buffered.geometry.unary_union
+        self._buffered_cache[buffer_meters] = buffered_coverage
 
-        # Create temporary coverage with buffered boundaries
-        from shapely.geometry import GeometryCollection
-
-        candidates = self.spatial_index.intersection(geometry.bounds)
-        intersecting = gdf_buffered.iloc[list(candidates)]
-
-        if intersecting.empty:
-            return False
-
-        buffered_coverage = intersecting.geometry.unary_union
         return geometry.intersects(buffered_coverage)

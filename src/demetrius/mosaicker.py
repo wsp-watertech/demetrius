@@ -141,9 +141,11 @@ class VRTMosaicker:
         tile_paths = [str(tile.local_path) for tile in tiles]
 
         logger.info(f"Creating VRT for dataset {dataset_id} with {len(tiles)} tiles")
+        logger.debug(tiles)
 
         try:
             cmd = ["gdalbuildvrt", str(vrt_path)] + tile_paths
+            logger.debug(f"Running command: {' '.join(cmd)}")
             result = subprocess.run(
                 cmd,
                 capture_output=True,

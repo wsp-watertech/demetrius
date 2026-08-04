@@ -124,7 +124,9 @@ class InspectionReport:
         # Clipped estimate
         return bbox_estimate * coverage_fraction
 
-    def estimate_dem_size_clipped_compressed(self, cellsize: float = 0.00001, compression_ratio: float = 0.35) -> float:
+    def estimate_dem_size_clipped_compressed(
+        self, cellsize: float = 0.00001, compression_ratio: float = 0.35
+    ) -> float:
         """Estimate output DEM size after clipping and compression.
 
         Factors in deflate/LZW compression typical of Cloud-Optimized GeoTIFF.
@@ -270,7 +272,7 @@ class InspectionReport:
                 f"  Download size: {format_bytes(download_size)}",
                 "  Output DEM size (1m, Float32):",
                 f"    - Bounding box (filled): {format_bytes(dem_size)}",
-                f"    - Clipped to polygon (uncompressed): {format_bytes(dem_size_clipped)} ({clip_factor*100:.1f}% of bbox)",
+                f"    - Clipped to polygon (uncompressed): {format_bytes(dem_size_clipped)} ({clip_factor * 100:.1f}% of bbox)",
                 f"    - Clipped to polygon (compressed COG): {format_bytes(dem_size_clipped_compressed)}",
                 "  (Estimates assume 1m resolution; COG uses ~3:1 compression)",
             ]

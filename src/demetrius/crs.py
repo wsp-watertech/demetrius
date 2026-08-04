@@ -46,16 +46,16 @@ def get_crs_from_raster(raster_path: str) -> Optional[str]:
         # Look for EPSG code in coordinateSystem
         if "coordinateSystem" in info:
             coord_sys = info["coordinateSystem"]
-            
+
             if "wkt" in coord_sys:
                 wkt = coord_sys["wkt"]
-                
+
                 # Try modern WKT format: ID["EPSG",26917]
                 # Get the last occurrence (the main CRS ID, not sub-component IDs)
                 matches = list(re.finditer(r'ID\["EPSG",(\d{5})\]', wkt))
                 if matches:
                     return f"EPSG:{matches[-1].group(1)}"
-                
+
                 # Try old WKT format: AUTHORITY["EPSG","32618"]
                 match = re.search(r'AUTHORITY\["EPSG","(\d{5})"\]', wkt)
                 if match:

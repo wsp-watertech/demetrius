@@ -170,6 +170,7 @@ class AOI(BaseModel):
         if output_crs is not None:
             try:
                 from .snapper import Snapper
+
                 snapper = Snapper()
                 meters_to_crs_units = snapper.get_conversion_factor_for_snapping(output_crs)
                 # Invert the conversion: if 1 meter = X CRS units, then buffer_in_crs_units / X = meters

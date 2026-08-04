@@ -179,7 +179,9 @@ class DatasetMerger:
             # Get the actual CRS from the tile file
             tile_crs = get_crs_from_raster(str(tile.local_path)) if tile.local_path else None
             if tile_crs is None:
-                logger.warning(f"Could not detect CRS from {tile.id if hasattr(tile, 'id') else 'tile'}")
+                logger.warning(
+                    f"Could not detect CRS from {tile.id if hasattr(tile, 'id') else 'tile'}"
+                )
                 tile_crs = "UNKNOWN"
             dataset_crs_groups[(tile.dataset_id, tile_crs)].append(tile)
 
@@ -217,7 +219,9 @@ class DatasetMerger:
                     # Try CRS-specific key first
                     if (dataset_id, crs) in dataset_vrts:
                         vrt_path = dataset_vrts[(dataset_id, crs)]
-                        logger.debug(f"Using pre-created CRS-specific VRT for {dataset_id} CRS {crs}")
+                        logger.debug(
+                            f"Using pre-created CRS-specific VRT for {dataset_id} CRS {crs}"
+                        )
                     # Fall back to dataset-only key for backward compatibility
                     elif dataset_id in dataset_vrts:
                         vrt_path = dataset_vrts[dataset_id]
@@ -230,7 +234,9 @@ class DatasetMerger:
 
         return dataset_rasters
 
-    def _prepare_dataset(self, dataset_id: str, tiles: Sequence[Tile], crs: Optional[str] = None) -> Path:
+    def _prepare_dataset(
+        self, dataset_id: str, tiles: Sequence[Tile], crs: Optional[str] = None
+    ) -> Path:
         """Prepare dataset for merging (VRT of all tiles or single tile).
 
         Parameters

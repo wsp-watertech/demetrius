@@ -121,7 +121,7 @@ class TNMTileSource(TileSource):
             if not items:
                 logger.debug("Received empty page, stopping pagination")
                 break
-            
+
             if total is not None and total > 0 and offset + len(items) >= total:
                 logger.debug(f"Reached declared total ({total}), stopping pagination")
                 break
@@ -130,7 +130,7 @@ class TNMTileSource(TileSource):
 
         if total is None or total == 0:
             total = len(tiles)  # Fallback to actual count if API never provided valid total
-        
+
         logger.info(f"Found {len(tiles)} tiles from TNM (total {total} items)")
         return tiles
 
@@ -171,7 +171,9 @@ class TNMTileSource(TileSource):
                         backoff = min(backoff * 2, MAX_BACKOFF)
                         continue
                     else:
-                        raise ValueError(f"TNM API request failed after {MAX_RETRIES} retries: {last_error}")
+                        raise ValueError(
+                            f"TNM API request failed after {MAX_RETRIES} retries: {last_error}"
+                        )
 
                 # 4xx errors: fail immediately (client error, not server issue)
                 response.raise_for_status()
@@ -188,13 +190,14 @@ class TNMTileSource(TileSource):
                     backoff = min(backoff * 2, MAX_BACKOFF)
                     continue
                 else:
-                    raise ValueError(f"TNM API request failed after {MAX_RETRIES} retries: {last_error}") from e
+                    raise ValueError(
+                        f"TNM API request failed after {MAX_RETRIES} retries: {last_error}"
+                    ) from e
 
             except httpx.HTTPError as e:
                 raise ValueError(f"TNM API request failed: {e}") from e
 
         raise ValueError(f"TNM API request failed after {MAX_RETRIES} retries: {last_error}")
-
 
     def _parse_tnm_item(self, item: dict[str, Any]) -> Tile:
         """Parse a single TNM product item into Tile object.
@@ -233,7 +236,7 @@ class TNMTileSource(TileSource):
         try:
             pub_date = self._parse_date(item["publicationDate"])
             last_updated = self._parse_date(item["lastUpdated"])
-            
+
             # Try to get project start date from sciencebase if available
             metaUrl = item.get("metaUrl")
             if metaUrl:

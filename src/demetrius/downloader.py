@@ -102,14 +102,14 @@ class TileDownloader:
             )
 
         logger.info(f"✓ Downloaded {len(downloaded)} tiles")
-        
+
         # Validate tiles for readability (catch codec issues early)
         logger.info("Validating tile codecs...")
         validated = self._validate_tiles(downloaded)
-        
+
         if validated:
             logger.info(f"✓ Validated {len(validated)} tiles")
-        
+
         return validated
 
     def _download_single(self, tile: Tile, attempt: int = 1) -> Tile:
@@ -256,16 +256,17 @@ class TileDownloader:
             )
 
             # Look for codec errors in stderr
-            if "Using code not yet in table" in result.stderr or "TIFFReadEncodedTile" in result.stderr:
+            if (
+                "Using code not yet in table" in result.stderr
+                or "TIFFReadEncodedTile" in result.stderr
+            ):
                 logger.warning(
                     f"Tile {tile.id} has unsupported TIFF codec, attempting re-encode to DEFLATE..."
                 )
                 return self._reencode_tile(tile, local_path)
 
             if result.returncode != 0:
-                logger.warning(
-                    f"gdalinfo returned error for {tile.id}: {result.stderr[:200]}"
-                )
+                logger.warning(f"gdalinfo returned error for {tile.id}: {result.stderr[:200]}")
                 # Try to re-encode even on other errors
                 return self._reencode_tile(tile, local_path)
 
@@ -301,11 +302,16 @@ class TileDownloader:
             result = subprocess.run(
                 [
                     "gdal_translate",
-                    "-co", "COMPRESS=DEFLATE",
-                    "-co", "PREDICTOR=3",
-                    "-co", "TILED=YES",
-                    "-co", "BLOCKXSIZE=512",
-                    "-co", "BLOCKYSIZE=512",
+                    "-co",
+                    "COMPRESS=DEFLATE",
+                    "-co",
+                    "PREDICTOR=3",
+                    "-co",
+                    "TILED=YES",
+                    "-co",
+                    "BLOCKXSIZE=512",
+                    "-co",
+                    "BLOCKYSIZE=512",
                     str(original_path),
                     str(temp_path),
                 ],
@@ -315,9 +321,7 @@ class TileDownloader:
             )
 
             if result.returncode != 0:
-                logger.error(
-                    f"gdal_translate failed for {tile.id}: {result.stderr[:300]}"
-                )
+                logger.error(f"gdal_translate failed for {tile.id}: {result.stderr[:300]}")
                 return None
 
             # Verify re-encoded tile is readable

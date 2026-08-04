@@ -246,7 +246,9 @@ class ProjectBoundaries:
         coverage = self.get_coverage_for_geometry(geometry)
         return not coverage.is_empty
 
-    def intersects_coverage_with_buffer(self, geometry: BaseGeometry, buffer_meters: float = 0) -> bool:
+    def intersects_coverage_with_buffer(
+        self, geometry: BaseGeometry, buffer_meters: float = 0
+    ) -> bool:
         """Check if geometry intersects any project boundaries, optionally expanded by a buffer.
 
         When a buffer is provided, project boundaries are expanded by that distance

@@ -3,8 +3,8 @@
 import logging
 import os
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 from .models import Tile
 
@@ -100,7 +100,9 @@ class VRTMosaicker:
         self.working_dir = Path(working_dir)
         self.working_dir.mkdir(parents=True, exist_ok=True)
 
-    def create_dataset_vrt(self, dataset_id: str, tiles: Sequence[Tile], crs: Optional[str] = None) -> Path:
+    def create_dataset_vrt(
+        self, dataset_id: str, tiles: Sequence[Tile], crs: str | None = None
+    ) -> Path:
         """Create a VRT file for all tiles in a dataset.
 
         Uses gdalbuildvrt for efficient virtual mosaicking without
@@ -210,7 +212,9 @@ class VRTMosaicker:
         vrt_paths = list(dataset_vrts.values())
 
         try:
-            cmd = ["gdalbuildvrt", "-allow_projection_difference", str(output_vrt)] + [str(p) for p in vrt_paths]
+            cmd = ["gdalbuildvrt", "-allow_projection_difference", str(output_vrt)] + [
+                str(p) for p in vrt_paths
+            ]
             result = subprocess.run(
                 cmd,
                 capture_output=True,

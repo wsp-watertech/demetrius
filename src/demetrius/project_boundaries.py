@@ -85,6 +85,7 @@ class ProjectBoundaries:
 
         self.gdf = gdf.reset_index(drop=True)
         self.spatial_index = self.gdf.sindex
+        self._buffered_cache: dict[float, "BaseGeometry"] = {}  # Cache for buffered boundaries
         logger.info(f"Loaded {len(self.gdf)} project boundaries")
 
     @classmethod
@@ -244,3 +245,47 @@ class ProjectBoundaries:
         """
         coverage = self.get_coverage_for_geometry(geometry)
         return not coverage.is_empty
+
+    def intersects_coverage_with_buffer(
+        self, geometry: BaseGeometry, buffer_meters: float = 0
+    ) -> bool:
+        """Check if geometry intersects any project boundaries, optionally expanded by a buffer.
+
+        When a buffer is provided, project boundaries are expanded by that distance
+        before checking intersection. This ensures that tiles just outside project
+        boundaries (but within the buffer zone) are still included.
+
+        Parameters
+        ----------
+        geometry : BaseGeometry
+            Query geometry (typically a tile).
+        buffer_meters : float, default=0
+            Buffer distance in meters to expand project boundaries. If 0, behaves
+            identically to :meth:`intersects_coverage`.
+
+        Returns
+        -------
+        bool
+            ``True`` if geometry intersects project boundaries (optionally buffered).
+        """
+        if buffer_meters == 0:
+            return self.intersects_coverage(geometry)
+
+        # Check cache first
+        if buffer_meters in self._buffered_cache:
+            buffered_coverage = self._buffered_cache[buffer_meters]
+            return geometry.intersects(buffered_coverage)
+
+        import geopandas as gpd
+
+        # Compute and cache the buffered boundaries (only done once per buffer distance)
+        gdf_mercator = self.gdf.to_crs("EPSG:3857")
+        gdf_mercator_buffered = gdf_mercator.copy()
+        gdf_mercator_buffered["geometry"] = gdf_mercator.geometry.buffer(buffer_meters)
+        gdf_buffered = gdf_mercator_buffered.to_crs("EPSG:4326")
+
+        # Compute union once and cache it
+        buffered_coverage = gdf_buffered.geometry.unary_union
+        self._buffered_cache[buffer_meters] = buffered_coverage
+
+        return geometry.intersects(buffered_coverage)

@@ -1,6 +1,7 @@
 """Reprojection of rasters using GDAL."""
 
 import logging
+import os
 import subprocess
 from pathlib import Path
 
@@ -21,7 +22,7 @@ class Reprojector:
         """Reproject raster to target CRS and optionally set output cellsize.
 
         Uses gdalwarp for efficient reprojection with support for
-        multi-threaded execution.
+        multi-threaded execution and optimized tiling/compression.
 
         Parameters
         ----------
@@ -33,6 +34,7 @@ class Reprojector:
             Target CRS, such as ``"EPSG:32618"``.
         resampling : str, default="bilinear"
             Resampling method, such as ``bilinear`` or ``cubic``.
+            Bilinear is significantly faster; cubic has better quality.
         cellsize : float | None, optional
             Output cell size in target CRS units.
 
@@ -76,6 +78,14 @@ class Reprojector:
                 "-multi",
                 "-wo",
                 "NUM_THREADS=ALL_CPUS",
+                "-wm",
+                "2000",  # 2GB working memory for efficient block processing
+                "-co",
+                "TILED=YES",
+                "-co",
+                "COMPRESS=DEFLATE",
+                "-co",
+                "BIGTIFF=YES",  # Support files > 4GB
                 "-overwrite",
             ]
 
@@ -92,6 +102,7 @@ class Reprojector:
                 capture_output=True,
                 text=True,
                 check=False,
+                env=os.environ.copy(),
             )
 
             if result.returncode != 0:

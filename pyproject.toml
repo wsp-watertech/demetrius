@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "demetrius"
-version = "0.1.0a5"
-description = "High-resolution DEM assembly from USGS 3DEP data for engineering applications"
+version = "0.1.0a6"
+description = "DEM assembly from USGS 3DEP data"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [{name = "Thomas Williams", email = "thomas.williams@wsp.com"}]

@@ -16,10 +16,10 @@ def filter_tiles_by_aoi(
     aoi: AOI,
     project_bounds: Optional[ProjectBoundaries] = None,
 ) -> list[Tile]:
-    """Filter tiles to only those intersecting the buffered AOI with actual coverage.
+    """Filter tiles to only those intersecting the buffered AOI.
 
-    If project_bounds is provided, only keeps tiles that intersect actual project
-    coverage areas (filling coverage gaps). Otherwise, uses simple bbox intersection.
+    If project_bounds is provided, additionally validates that tiles intersect
+    actual project coverage areas (used to detect and report coverage gaps).
 
     Parameters
     ----------
@@ -28,13 +28,13 @@ def filter_tiles_by_aoi(
     aoi : AOI
         Area of interest with buffer.
     project_bounds : ProjectBoundaries | None, optional
-        Optional project boundaries for coverage-aware filtering.
+        Optional project boundaries for coverage validation.
 
     Returns
     -------
     list[Tile]
-        Tiles that intersect the buffered AOI and, when project boundaries are
-        provided, have actual coverage.
+        Tiles that intersect the buffered AOI and (if project_bounds provided)
+        have actual project coverage.
     """
     logger.info(f"Filtering {len(tiles)} tiles by AOI intersection")
 
@@ -45,20 +45,19 @@ def filter_tiles_by_aoi(
     for tile in tiles:
         tile_polygon = tile.bounds_wgs84.to_polygon()
 
-        # Check basic intersection
+        # Check basic intersection with buffered AOI
         if not tile_polygon.intersects(buffered_aoi):
             logger.debug(f"Discarded tile {tile.tile_id} (outside buffered AOI)")
             continue
 
         # If project boundaries provided, check for actual coverage
+        # Don't buffer the project boundaries - they represent actual data footprints
         if project_bounds is not None:
             if not project_bounds.intersects_coverage(tile_polygon):
                 logger.debug(f"Discarded tile {tile.tile_id} (no project coverage in tile area)")
                 continue
-            logger.debug(f"Kept tile {tile.tile_id} (intersects buffered AOI and coverage)")
-        else:
-            logger.debug(f"Kept tile {tile.tile_id} (intersects buffered AOI)")
 
+        logger.debug(f"Kept tile {tile.tile_id} (intersects buffered AOI)")
         filtered.append(tile)
 
     logger.info(f"Filtered to {len(filtered)} tiles")

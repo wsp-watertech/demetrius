@@ -54,8 +54,10 @@ def batch_process(
     cellsize: Optional[float] = None,
     no_snap: bool = False,
     no_clip: bool = False,
+    no_overviews: bool = False,
     project_bounds: Optional[Union[ProjectBoundaries, str, Path]] = None,
     require_full_coverage: bool = False,
+    data_dir: Optional[Union[str, Path]] = None,
     mode: str = "full",
     max_workers: int = 1,
 ) -> list[PipelineResult]:
@@ -87,11 +89,15 @@ def batch_process(
     no_clip : bool, default=False
         Disable clipping to AOI. If True, output is full merged/reprojected extent
         for every AOI rather than clipped to the buffered geometry.
+    no_overviews : bool, default=False
+        Skip building overview pyramids in the output COGs for every AOI.
     project_bounds : ProjectBoundaries | str | Path | None
         Project boundaries instance, or a path to load one from. Loaded once
         and reused across all AOIs.
     require_full_coverage : bool, default=False
         Require full coverage of each AOI by project boundaries.
+    data_dir : str | Path | None
+        Directory for downloaded tiles. Defaults to ``DEMETRIUS_DATA_DIR`` env var or ``~/.demetrius``.
     mode : {"full", "download-only", "process-only"}
         Which pipeline stages to run for each AOI.
     max_workers : int, default=1
@@ -144,8 +150,10 @@ def batch_process(
             cellsize=cellsize,
             no_snap=no_snap,
             no_clip=no_clip,
+            no_overviews=no_overviews,
             project_bounds=project_bounds,
             require_full_coverage=require_full_coverage,
+            data_dir=data_dir,
             mode=mode,
         )
 

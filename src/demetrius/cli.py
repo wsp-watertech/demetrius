@@ -73,6 +73,13 @@ def cli():
     help="Disable clipping to AOI (output is full merged/reprojected extent)",
 )
 @click.option(
+    "--no-overviews",
+    is_flag=True,
+    default=False,
+    help="Skip building overview pyramids in the output COG (faster; use if output is "
+    "consumed by tools reading at full resolution rather than viewed interactively)",
+)
+@click.option(
     "--project-bounds",
     required=True,
     type=click.Path(exists=True),
@@ -85,10 +92,22 @@ def cli():
     help="Require full coverage of original AOI (default: coverage is optional)",
 )
 @click.option(
+    "--data-dir",
+    type=click.Path(),
+    default=None,
+    help="Directory for downloaded tiles (default: DEMETRIUS_DATA_DIR env var or ~/.demetrius)",
+)
+@click.option(
     "--mode",
     default="full",
     type=click.Choice(["full", "download-only", "process-only"]),
     help="Processing mode",
+)
+@click.option(
+    "--debug",
+    is_flag=True,
+    default=False,
+    help="Enable debug logging",
 )
 def process(
     aoi,
@@ -99,9 +118,12 @@ def process(
     cellsize,
     no_snap,
     no_clip,
+    no_overviews,
     project_bounds,
     require_full_coverage,
+    data_dir,
     mode,
+    debug,
 ):
     """Process the DEM workflow.
 
@@ -109,6 +131,10 @@ def process(
     process-only stages, for the provided area of interest.
     """
     from .pipeline import run_pipeline
+
+    # Set logging level if debug is enabled
+    if debug:
+        logging.getLogger().setLevel(logging.DEBUG)
 
     result = run_pipeline(
         aoi,
@@ -120,8 +146,10 @@ def process(
         cellsize=cellsize,
         no_snap=no_snap,
         no_clip=no_clip,
+        no_overviews=no_overviews,
         project_bounds=project_bounds,
         require_full_coverage=require_full_coverage,
+        data_dir=data_dir,
         mode=mode,
         progress_cb=lambda msg: click.echo(msg),
     )
@@ -146,14 +174,32 @@ def process(
     type=click.Path(exists=True),
     help="Path to AOI geometry",
 )
-def inspect(aoi: str) -> None:
+@click.option(
+    "--project-bounds",
+    type=click.Path(exists=True),
+    help="Path to project boundaries (optional, for filtering tiles to project scope)",
+)
+@click.option(
+    "--verbose",
+    is_flag=True,
+    default=False,
+    help="Show detailed per-tile list grouped by project (in addition to summary)",
+)
+def inspect(aoi: str, project_bounds: str, verbose: bool) -> None:
     """Inspect available tiles for an AOI without downloading them."""
     try:
         from .coverage import validate_coverage
+        from .project_boundaries import ProjectBoundaries
 
         # Load AOI
         aoi_obj = AOI.from_file(aoi)
         click.echo(f"✓ Loaded AOI from {aoi}")
+
+        # Load project bounds if provided
+        project_bounds_obj = None
+        if project_bounds:
+            project_bounds_obj = ProjectBoundaries.from_file(project_bounds)
+            click.echo(f"✓ Loaded project boundaries from {project_bounds}")
 
         # Query TNM
         click.echo("Querying TNM for tiles...")
@@ -171,16 +217,23 @@ def inspect(aoi: str) -> None:
 
         # Validate coverage
         click.echo("Validating coverage...")
+        require_full = project_bounds_obj is not None
         validate_coverage(
             prioritized_tiles,
             aoi_obj,
-            require_full_coverage=False,
+            project_bounds=project_bounds_obj,
+            require_full_coverage=require_full,
         )
 
         # Generate report
         report = InspectionReport(prioritized_tiles, aoi_obj)
         click.echo("")
         click.echo(report.summary())
+
+        # Output verbose details if requested
+        if verbose:
+            click.echo("")
+            click.echo(report.verbose_details())
 
     except Exception as e:
         click.echo(f"✗ Error: {e}", err=True)
@@ -243,6 +296,13 @@ def inspect(aoi: str) -> None:
     help="Disable clipping to AOI (output is full merged/reprojected extent)",
 )
 @click.option(
+    "--no-overviews",
+    is_flag=True,
+    default=False,
+    help="Skip building overview pyramids in the output COGs (faster; use if output is "
+    "consumed by tools reading at full resolution rather than viewed interactively)",
+)
+@click.option(
     "--project-bounds",
     type=click.Path(exists=True),
     help="Path to project boundaries (GeoParquet, GeoJSON, shapefile, etc.)",
@@ -252,6 +312,12 @@ def inspect(aoi: str) -> None:
     is_flag=True,
     default=False,
     help="Require full coverage of each AOI (default: coverage is optional)",
+)
+@click.option(
+    "--data-dir",
+    type=click.Path(),
+    default=None,
+    help="Directory for downloaded tiles (default: DEMETRIUS_DATA_DIR env var or ~/.demetrius)",
 )
 @click.option(
     "--mode",
@@ -265,6 +331,12 @@ def inspect(aoi: str) -> None:
     type=int,
     help="Number of AOIs to process concurrently (default: 1, sequential)",
 )
+@click.option(
+    "--debug",
+    is_flag=True,
+    default=False,
+    help="Enable debug logging",
+)
 def batch(
     input_path,
     name_field,
@@ -275,16 +347,23 @@ def batch(
     cellsize,
     no_snap,
     no_clip,
+    no_overviews,
     project_bounds,
     require_full_coverage,
+    data_dir,
     mode,
     max_workers,
+    debug,
 ):
     """Batch-process DEMs for every AOI polygon in an input file.
 
     Each AOI is named using a user-specified column from the input file.
     """
     from .batch import batch_process
+
+    # Set logging level if debug is enabled
+    if debug:
+        logging.getLogger().setLevel(logging.DEBUG)
 
     try:
         results = batch_process(
@@ -297,8 +376,10 @@ def batch(
             cellsize=cellsize,
             no_snap=no_snap,
             no_clip=no_clip,
+            no_overviews=no_overviews,
             project_bounds=project_bounds,
             require_full_coverage=require_full_coverage,
+            data_dir=data_dir,
             mode=mode,
             max_workers=max_workers,
         )

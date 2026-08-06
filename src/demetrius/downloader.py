@@ -1,7 +1,9 @@
 """Parallel tile downloading with integrity checks."""
 
 import logging
+import os
 import shutil
+import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable, Optional, Sequence
@@ -12,7 +14,7 @@ from .models import Tile
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_DATA_DIR = Path.home() / ".demetrius"
+DEFAULT_DATA_DIR = Path(os.environ.get("DEMETRIUS_DATA_DIR", Path.home() / ".demetrius"))
 MAX_RETRIES = 3
 RETRY_BACKOFF = 2
 
@@ -100,7 +102,15 @@ class TileDownloader:
             )
 
         logger.info(f"✓ Downloaded {len(downloaded)} tiles")
-        return downloaded
+
+        # Validate tiles for readability (catch codec issues early)
+        logger.info("Validating tile codecs...")
+        validated = self._validate_tiles(downloaded)
+
+        if validated:
+            logger.info(f"✓ Validated {len(validated)} tiles")
+
+        return validated
 
     def _download_single(self, tile: Tile, attempt: int = 1) -> Tile:
         """Download a single tile with retry logic.
@@ -178,3 +188,163 @@ class TileDownloader:
         dataset_dir = self.data_dir / f"dataset_{tile.dataset_id}"
         filename = f"tile_{tile.tile_id}.tif"
         return dataset_dir / filename
+
+    def _validate_tiles(self, tiles: Sequence[Tile]) -> list[Tile]:
+        """Validate tiles for readability and re-encode if codec issues detected.
+
+        Some TNM tiles use unsupported TIFF compression codecs (e.g., ZSTD).
+        This method tests each tile with gdalinfo and re-encodes with DEFLATE
+        if codec errors are detected, ensuring all tiles are readable by gdalwarp.
+
+        Parameters
+        ----------
+        tiles : Sequence[Tile]
+            Downloaded tiles to validate.
+
+        Returns
+        -------
+        list[Tile]
+            Tiles that are readable or were successfully re-encoded.
+        """
+        valid_tiles = []
+        invalid_tiles = []
+
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = {executor.submit(self._validate_single, tile): tile for tile in tiles}
+
+            for future in as_completed(futures):
+                tile = futures[future]
+                try:
+                    result = future.result()
+                    if result is not None:
+                        valid_tiles.append(result)
+                except Exception as e:
+                    logger.error(f"Tile {tile.id} could not be validated or re-encoded: {e}")
+                    invalid_tiles.append(tile)
+
+        if invalid_tiles:
+            logger.warning(
+                f"Failed to validate/re-encode {len(invalid_tiles)} tile(s): "
+                f"{', '.join(t.id for t in invalid_tiles)}. "
+                f"These tiles will be excluded from processing."
+            )
+
+        return valid_tiles
+
+    def _validate_single(self, tile: Tile) -> Optional[Tile]:
+        """Validate a single tile and re-encode if codec issues detected.
+
+        Parameters
+        ----------
+        tile : Tile
+            Tile to validate.
+
+        Returns
+        -------
+        Tile | None
+            The tile if valid or successfully re-encoded, None if unable to repair.
+        """
+        local_path = Path(tile.local_path)
+
+        # Test with gdalinfo to check for codec issues
+        try:
+            result = subprocess.run(
+                ["gdalinfo", "-checksum", str(local_path)],
+                capture_output=True,
+                timeout=10,
+                text=True,
+            )
+
+            # Look for codec errors in stderr
+            if (
+                "Using code not yet in table" in result.stderr
+                or "TIFFReadEncodedTile" in result.stderr
+            ):
+                logger.warning(
+                    f"Tile {tile.id} has unsupported TIFF codec, attempting re-encode to DEFLATE..."
+                )
+                return self._reencode_tile(tile, local_path)
+
+            if result.returncode != 0:
+                logger.warning(f"gdalinfo returned error for {tile.id}: {result.stderr[:200]}")
+                # Try to re-encode even on other errors
+                return self._reencode_tile(tile, local_path)
+
+            logger.debug(f"Tile {tile.id} is readable")
+            return tile
+
+        except subprocess.TimeoutExpired:
+            logger.warning(f"gdalinfo timeout for {tile.id}, attempting re-encode")
+            return self._reencode_tile(tile, local_path)
+        except Exception as e:
+            logger.warning(f"Error validating {tile.id}: {e}, attempting re-encode")
+            return self._reencode_tile(tile, local_path)
+
+    def _reencode_tile(self, tile: Tile, original_path: Path) -> Optional[Tile]:
+        """Re-encode tile to standard DEFLATE compression.
+
+        Parameters
+        ----------
+        tile : Tile
+            Tile to re-encode.
+        original_path : Path
+            Original tile file path.
+
+        Returns
+        -------
+        Tile | None
+            The tile if re-encoding succeeded, None otherwise.
+        """
+        try:
+            temp_path = original_path.with_suffix(".reenc.tif")
+
+            # Use gdal_translate to re-encode with DEFLATE compression
+            result = subprocess.run(
+                [
+                    "gdal_translate",
+                    "-co",
+                    "COMPRESS=DEFLATE",
+                    "-co",
+                    "PREDICTOR=3",
+                    "-co",
+                    "TILED=YES",
+                    "-co",
+                    "BLOCKXSIZE=512",
+                    "-co",
+                    "BLOCKYSIZE=512",
+                    str(original_path),
+                    str(temp_path),
+                ],
+                capture_output=True,
+                timeout=60,
+                text=True,
+            )
+
+            if result.returncode != 0:
+                logger.error(f"gdal_translate failed for {tile.id}: {result.stderr[:300]}")
+                return None
+
+            # Verify re-encoded tile is readable
+            verify_result = subprocess.run(
+                ["gdalinfo", "-checksum", str(temp_path)],
+                capture_output=True,
+                timeout=10,
+                text=True,
+            )
+
+            if verify_result.returncode != 0:
+                logger.error(f"Re-encoded tile {tile.id} is still unreadable")
+                temp_path.unlink(missing_ok=True)
+                return None
+
+            # Replace original with re-encoded version
+            shutil.move(str(temp_path), str(original_path))
+            logger.info(f"✓ Successfully re-encoded {tile.id} to DEFLATE")
+            return tile
+
+        except subprocess.TimeoutExpired:
+            logger.error(f"Re-encoding timeout for {tile.id}")
+            return None
+        except Exception as e:
+            logger.error(f"Failed to re-encode {tile.id}: {e}")
+            return None

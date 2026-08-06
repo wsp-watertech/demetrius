@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -87,6 +88,7 @@ class Clipper:
                     capture_output=True,
                     text=True,
                     check=False,
+                    env=os.environ.copy(),
                 )
 
                 if result.returncode != 0:

@@ -1,12 +1,80 @@
 """Multi-CRS handling and detection."""
 
+import json
 import logging
+import os
 import re
+import subprocess
+from pathlib import Path
 from typing import Optional, Sequence
 
 from .models import Tile
 
 logger = logging.getLogger(__name__)
+
+
+def get_crs_from_raster(raster_path: str) -> Optional[str]:
+    """Extract CRS from a raster file using gdalinfo.
+
+    Parameters
+    ----------
+    raster_path : str
+        Path to the raster file.
+
+    Returns
+    -------
+    str | None
+        CRS string such as ``"EPSG:26917"`` or None if detection fails.
+    """
+    try:
+        result = subprocess.run(
+            ["gdalinfo", "-json", str(raster_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=os.environ.copy(),
+            timeout=10,
+        )
+
+        if result.returncode != 0:
+            logger.debug(f"gdalinfo failed for {raster_path}: {result.stderr}")
+            return None
+
+        # Parse JSON output
+        info = json.loads(result.stdout)
+
+        # Look for EPSG code in coordinateSystem
+        if "coordinateSystem" in info:
+            coord_sys = info["coordinateSystem"]
+
+            if "wkt" in coord_sys:
+                wkt = coord_sys["wkt"]
+
+                # Try modern WKT format: ID["EPSG",26917]
+                # Get the last occurrence (the main CRS ID, not sub-component IDs)
+                matches = list(re.finditer(r'ID\["EPSG",(\d{5})\]', wkt))
+                if matches:
+                    return f"EPSG:{matches[-1].group(1)}"
+
+                # Try old WKT format: AUTHORITY["EPSG","32618"]
+                match = re.search(r'AUTHORITY\["EPSG","(\d{5})"\]', wkt)
+                if match:
+                    return f"EPSG:{match.group(1)}"
+
+        return None
+
+    except json.JSONDecodeError:
+        logger.debug(f"Failed to parse gdalinfo JSON for {raster_path}")
+        return None
+    except subprocess.TimeoutExpired:
+        logger.debug(f"gdalinfo timed out for {raster_path}")
+        return None
+    except FileNotFoundError:
+        logger.debug("gdalinfo not found")
+        return None
+    except Exception as e:
+        logger.debug(f"Failed to detect CRS from {raster_path}: {e}")
+        return None
 
 
 def extract_utm_zone(crs: Optional[str]) -> Optional[int]:

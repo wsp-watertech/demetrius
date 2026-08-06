@@ -1,6 +1,7 @@
 """Grid snapping for aligned DEM outputs."""
 
 import logging
+import os
 import subprocess
 from pathlib import Path
 from typing import Optional, Tuple
@@ -277,6 +278,7 @@ class Snapper:
                 capture_output=True,
                 text=True,
                 check=False,
+                env=os.environ.copy(),
             )
 
             if result.returncode != 0:

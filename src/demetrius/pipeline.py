@@ -1,11 +1,13 @@
 """Core DEM generation pipeline.
 
-This module contains the actual query -> download -> mosaic -> reproject ->
-clip -> snap -> COG workflow as a reusable library function, independent of
-the CLI. ``cli.py`` and ``batch.py`` both build on :func:`run_pipeline`.
+This module contains the actual query -> download -> mosaic ->
+merge/reproject/clip (single gdalwarp pass) -> snap -> COG workflow as a
+reusable library function, independent of the CLI. ``cli.py`` and
+``batch.py`` both build on :func:`run_pipeline`.
 """
 
 import logging
+import os
 import tempfile
 from collections import defaultdict
 from dataclasses import dataclass
@@ -21,6 +23,50 @@ ProgressCallback = Callable[[str], None]
 
 PipelineMode = Literal["full", "download-only", "process-only"]
 PipelineStatus = Literal["success", "failed"]
+
+
+def _ensure_tmpdir_valid() -> None:
+    """Validate that TMPDIR (if set) points to an existing, writable directory.
+
+    Python's ``tempfile`` module silently falls back to the system default
+    (e.g. ``/tmp``) if ``TMPDIR`` points to a directory that doesn't exist or
+    isn't writable -- it never raises an error. This means a mistyped or
+    not-yet-created ``TMPDIR`` (a common issue when scratch volumes are
+    mounted after the fact, or under ``nohup``/non-interactive shells) fails
+    silently and large jobs end up writing to a small ``/tmp`` anyway.
+
+    This creates the directory (including parents) if it doesn't exist, and
+    raises a clear error if it can't be created or isn't writable, rather
+    than letting GDAL/tempfile silently fall back elsewhere.
+
+    Raises
+    ------
+    RuntimeError
+        If TMPDIR is set but cannot be created or is not writable.
+    """
+    tmpdir_env = os.environ.get("TMPDIR")
+    if not tmpdir_env:
+        return
+
+    tmpdir_path = Path(tmpdir_env)
+    try:
+        tmpdir_path.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise RuntimeError(
+            f"TMPDIR is set to '{tmpdir_env}' but the directory could not be created: {e}"
+        ) from e
+
+    if not os.access(tmpdir_path, os.W_OK):
+        raise RuntimeError(
+            f"TMPDIR is set to '{tmpdir_env}' but it is not writable. "
+            "tempfile/GDAL will silently fall back to the system default temp "
+            "directory (e.g. /tmp) if this is not fixed, which can exhaust disk "
+            "space on large jobs."
+        )
+
+    # Clear tempfile's cached tempdir so the (possibly newly created) TMPDIR
+    # is picked up even if gettempdir() was already called earlier in this process.
+    tempfile.tempdir = None
 
 
 @dataclass
@@ -65,8 +111,10 @@ def run_pipeline(
     cellsize: Optional[float] = None,
     no_snap: bool = False,
     no_clip: bool = False,
+    no_overviews: bool = False,
     project_bounds: Optional[Union[ProjectBoundaries, str, Path]] = None,
     require_full_coverage: bool = False,
+    data_dir: Optional[Union[str, Path]] = None,
     mode: PipelineMode = "full",
     progress_cb: Optional[ProgressCallback] = None,
 ) -> PipelineResult:
@@ -97,10 +145,18 @@ def run_pipeline(
     no_clip : bool, default=False
         Disable clipping to AOI. If True, output is full merged/reprojected extent
         rather than clipped to the buffered AOI.
+    no_overviews : bool, default=False
+        Skip building overview pyramids in the output COG. Overviews speed up
+        zoomed-out rendering in GIS/COG viewers but require additional
+        downsampled reads of the full raster during generation. Useful to
+        disable for outputs primarily consumed by tools reading at full
+        resolution (e.g. hydrologic models).
     project_bounds : ProjectBoundaries | str | Path | None
         Project boundaries instance, or a path to load one from.
     require_full_coverage : bool, default=False
         Require full coverage of the original AOI by project boundaries.
+    data_dir : str | Path | None
+        Directory for downloaded tiles. Defaults to ``DEMETRIUS_DATA_DIR`` env var or ``~/.demetrius``.
     mode : {"full", "download-only", "process-only"}
         Which pipeline stages to run.
     progress_cb : Callable[[str], None] | None
@@ -120,8 +176,8 @@ def run_pipeline(
             progress_cb(message)
 
     try:
-        from .clipper import Clipper
-        from .cog import COGGenerator
+        _ensure_tmpdir_valid()
+
         from .coverage import validate_coverage
         from .crs import get_target_utm_for_tiles
         from .downloader import TileDownloader
@@ -129,10 +185,9 @@ def run_pipeline(
         from .filtering import filter_tiles_by_aoi
         from .manifest import Manifest
         from .merger import DatasetMerger
-        from .mosaicker import VRTMosaicker, materialize_vrt
+        from .mosaicker import VRTMosaicker
         from .priority import prioritize_datasets
         from .projections import get_projection_file
-        from .reprojector import Reprojector
         from .snapper import Snapper
         from .tnm import TNMTileSource
 
@@ -283,7 +338,7 @@ def run_pipeline(
             def _download_progress(completed, total):
                 _report(f"Downloaded {completed}/{total} tiles")
 
-            downloader = TileDownloader(progress_callback=_download_progress)
+            downloader = TileDownloader(data_dir=data_dir, progress_callback=_download_progress)
             downloaded_tiles = downloader.download(prioritized_tiles)
             _report(f"Downloaded {len(downloaded_tiles)} tiles")
 
@@ -299,47 +354,32 @@ def run_pipeline(
         with tempfile.TemporaryDirectory() as tmpdir:
             mosaicker = VRTMosaicker(Path(tmpdir))
 
-            datasets = defaultdict(list)
+            # Group tiles by (dataset_id, crs) to create separate VRTs for each projection
+            from .crs import get_crs_from_raster, extract_utm_zone
+
+            datasets_by_crs: dict[tuple[str, str], list[Tile]] = defaultdict(list)
             for tile in downloaded_tiles:
-                datasets[tile.dataset_id].append(tile)
+                # Get the actual CRS from the downloaded tile file
+                tile_crs = get_crs_from_raster(str(tile.local_path))
+                if tile_crs is None:
+                    logger.warning(f"Could not detect CRS from {tile.id}, skipping grouping")
+                    tile_crs = "UNKNOWN"
+                datasets_by_crs[(tile.dataset_id, tile_crs)].append(tile)
 
             dataset_vrts = {}
-            for dataset_id, tiles in datasets.items():
-                vrt_path = mosaicker.create_dataset_vrt(dataset_id, tiles)
-                dataset_vrts[dataset_id] = vrt_path
+            for (dataset_id, crs), tiles in datasets_by_crs.items():
+                vrt_path = mosaicker.create_dataset_vrt(dataset_id, tiles, crs=crs)
+                # Store with (dataset_id, crs) key for CRS-specific lookup
+                dataset_vrts[(dataset_id, crs)] = vrt_path
 
-            _report("Merging datasets...")
-            if len(dataset_vrts) == 1:
-                only_dataset_id, only_vrt = next(iter(dataset_vrts.items()))
-                # Flatten a many-tile VRT into a single GeoTIFF here too, since
-                # skipping DatasetMerger means it would otherwise pass straight
-                # into Reprojector unmaterialized, forcing gdalwarp to resolve
-                # reads against every underlying tile during reprojection.
-                merged_raster = materialize_vrt(
-                    only_vrt, Path(tmpdir) / f"dataset_{only_dataset_id}_flat.tif"
-                )
-            else:
-                merger = DatasetMerger(Path(tmpdir))
-                merged_raster = merger.merge_datasets(
-                    downloaded_tiles,
-                    Path(tmpdir) / "merged.tif",
-                    dataset_vrts=dataset_vrts,
-                )
-
-            # Step 4: Reproject and clip
-            if no_clip:
-                _report("Reprojecting (clipping disabled)...")
-            else:
-                _report("Reprojecting and clipping...")
-
-            reprojector = Reprojector()
-            reprojected = Path(tmpdir) / "reprojected.tif"
-            reprojector.reproject(
-                merged_raster, reprojected, output_crs, cellsize=effective_cellsize
-            )
-
+            # Step 4: Merge (priority overwrite), reproject, clip, and optionally
+            # snap to grid in a single gdalwarp pass. Combining these avoids
+            # materializing multiple full-resolution intermediate rasters between
+            # steps (previously merged.tif and reprojected.tif), which cuts both
+            # runtime and disk usage significantly for large multi-dataset jobs.
+            cutline_geometry_wgs84 = None
             if not no_clip:
-                _report("Clipping to AOI with buffer...")
+                _report("Merging, reprojecting, and clipping to AOI with buffer...")
 
                 clipping_geometry = aoi_obj.buffered_geometry_in_crs(output_crs)
 
@@ -347,39 +387,39 @@ def run_pipeline(
 
                 gdf_clip = gpd.GeoDataFrame([{"geometry": clipping_geometry}], crs=output_crs)
                 gdf_wgs84 = gdf_clip.to_crs("EPSG:4326")
-                clipping_geometry_wgs84 = gdf_wgs84.iloc[0].geometry
-
-                clipper = Clipper()
-                clipped = Path(tmpdir) / "clipped.tif"
-                clipper.clip(
-                    reprojected,
-                    clipped,
-                    clipping_geometry_wgs84,
-                    geometry_crs="EPSG:4326",
-                )
-                _report("Reprojected and clipped")
+                cutline_geometry_wgs84 = gdf_wgs84.iloc[0].geometry
             else:
-                clipped = reprojected
-                _report("Reprojected (unclipped)")
+                _report("Merging and reprojecting (clipping disabled)...")
 
-            # Step 5: Snap to grid (optional), convert elevation units, generate COG
-            if not no_snap:
-                _report("Snapping to grid and converting elevation units...")
+            merger = DatasetMerger(Path(tmpdir))
+            clipped = merger.merge_reproject_clip(
+                downloaded_tiles,
+                Path(tmpdir) / "merged.tif",
+                target_crs=output_crs,
+                dataset_vrts=dataset_vrts,
+                cellsize=effective_cellsize,
+                cutline_geometry=cutline_geometry_wgs84,
+                snap_to_grid=not no_snap,
+            )
 
-                snapped = Path(tmpdir) / "snapped.tif"
-                snapper = Snapper()
-                snapper.snap(clipped, snapped, cellsize=effective_cellsize)
-                clipped = snapped
+            if not no_clip:
+                _report("Merged, reprojected, and clipped")
             else:
-                _report("Converting elevation units and generating Cloud-Optimized GeoTIFF...")
+                _report("Merged and reprojected (unclipped)")
+
+            # Step 5: Convert elevation units and generate Cloud-Optimized GeoTIFF in one pass
+            # Combines elevation conversion (meters → target CRS units) with COG generation
+            # to avoid materializing an intermediate raster.
+            _report("Converting elevation units and generating Cloud-Optimized GeoTIFF...")
 
             elevation_converter = ElevationConverter()
-            converted = Path(tmpdir) / "converted.tif"
-            elevation_converter.convert(clipped, converted, output_crs)
-
-            cog_gen = COGGenerator()
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            cog_gen.generate(converted, output_path)
+            elevation_converter.convert_and_generate_cog(
+                clipped,
+                output_path,
+                target_crs=output_crs,
+                generate_overviews=not no_overviews,
+            )
 
         _report(f"SUCCESS! DEM saved to: {output_path}")
 

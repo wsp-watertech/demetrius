@@ -1,9 +1,10 @@
 """VRT-based mosaicking for efficient large-scale raster merging."""
 
 import logging
+import os
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 from .models import Tile
 
@@ -67,6 +68,7 @@ def materialize_vrt(vrt_path: Path, output_path: Path) -> Path:
             capture_output=True,
             text=True,
             check=False,
+            env=os.environ.copy(),
         )
 
         if result.returncode != 0:
@@ -98,18 +100,27 @@ class VRTMosaicker:
         self.working_dir = Path(working_dir)
         self.working_dir.mkdir(parents=True, exist_ok=True)
 
-    def create_dataset_vrt(self, dataset_id: str, tiles: Sequence[Tile]) -> Path:
+    def create_dataset_vrt(
+        self, dataset_id: str, tiles: Sequence[Tile], crs: str | None = None
+    ) -> Path:
         """Create a VRT file for all tiles in a dataset.
 
         Uses gdalbuildvrt for efficient virtual mosaicking without
         loading data into memory.
+
+        Note: Tiles should be from the same CRS. The pipeline pre-splits
+        tiles by CRS to avoid cross-projection reprojection overhead.
 
         Parameters
         ----------
         dataset_id : str
             Dataset identifier.
         tiles : Sequence[Tile]
-            Tiles in this dataset. All must have ``local_path`` set.
+            Tiles in this dataset. All must have ``local_path`` set and should
+            be from the same CRS.
+        crs : str | None, optional
+            CRS identifier (e.g., "EPSG:26917"). If provided, included in VRT
+            filename to distinguish VRTs for the same dataset in different CRS.
 
         Returns
         -------
@@ -133,20 +144,25 @@ class VRTMosaicker:
             if not Path(tile.local_path).exists():
                 raise ValueError(f"Tile {tile.id} file not found: {tile.local_path}")
 
-        vrt_path = self.working_dir / f"dataset_{dataset_id}.vrt"
+        # Include CRS in filename if provided to distinguish multi-CRS datasets
+        crs_suffix = f"_{crs.replace(':', '_')}" if crs and crs != "UNKNOWN" else ""
+        vrt_path = self.working_dir / f"dataset_{dataset_id}{crs_suffix}.vrt"
 
         # Get tile paths
         tile_paths = [str(tile.local_path) for tile in tiles]
 
-        logger.info(f"Creating VRT for dataset {dataset_id} with {len(tiles)} tiles")
+        logger.info(f"Creating VRT for dataset {dataset_id}{crs_suffix} with {len(tiles)} tiles")
+        logger.debug(tiles)
 
         try:
             cmd = ["gdalbuildvrt", str(vrt_path)] + tile_paths
+            logger.debug(f"Running command: {' '.join(cmd)}")
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 check=False,
+                env=os.environ.copy(),
             )
 
             if result.returncode != 0:
@@ -196,12 +212,15 @@ class VRTMosaicker:
         vrt_paths = list(dataset_vrts.values())
 
         try:
-            cmd = ["gdalbuildvrt", str(output_vrt)] + [str(p) for p in vrt_paths]
+            cmd = ["gdalbuildvrt", "-allow_projection_difference", str(output_vrt)] + [
+                str(p) for p in vrt_paths
+            ]
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 check=False,
+                env=os.environ.copy(),
             )
 
             if result.returncode != 0:

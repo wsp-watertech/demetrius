@@ -124,7 +124,9 @@ class InspectionReport:
         # Clipped estimate
         return bbox_estimate * coverage_fraction
 
-    def estimate_dem_size_clipped_compressed(self, cellsize: float = 0.00001, compression_ratio: float = 0.35) -> float:
+    def estimate_dem_size_clipped_compressed(
+        self, cellsize: float = 0.00001, compression_ratio: float = 0.35
+    ) -> float:
         """Estimate output DEM size after clipping and compression.
 
         Factors in deflate/LZW compression typical of Cloud-Optimized GeoTIFF.
@@ -270,11 +272,71 @@ class InspectionReport:
                 f"  Download size: {format_bytes(download_size)}",
                 "  Output DEM size (1m, Float32):",
                 f"    - Bounding box (filled): {format_bytes(dem_size)}",
-                f"    - Clipped to polygon (uncompressed): {format_bytes(dem_size_clipped)} ({clip_factor*100:.1f}% of bbox)",
+                f"    - Clipped to polygon (uncompressed): {format_bytes(dem_size_clipped)} ({clip_factor * 100:.1f}% of bbox)",
                 f"    - Clipped to polygon (compressed COG): {format_bytes(dem_size_clipped_compressed)}",
                 "  (Estimates assume 1m resolution; COG uses ~3:1 compression)",
             ]
         )
 
         lines.append("\n" + "=" * 70)
+        return "\n".join(lines)
+
+    def verbose_details(self) -> str:
+        """Generate verbose per-tile details showing which files from which projects.
+
+        Returns
+        -------
+        str
+            Formatted verbose details listing each tile and its source project.
+        """
+        lines = [
+            "=" * 100,
+            "Detailed Tile List by Project (Priority Order)",
+            "=" * 100,
+        ]
+
+        if not self.tiles:
+            lines.append("\n(No tiles found)")
+            return "\n".join(lines)
+
+        # Group tiles by dataset_id
+        datasets = {}
+        for tile in self.tiles:
+            if tile.dataset_id not in datasets:
+                datasets[tile.dataset_id] = []
+            datasets[tile.dataset_id].append(tile)
+
+        # Sort datasets by priority (the first tile in each dataset has the priority set)
+        sorted_datasets = sorted(
+            datasets.items(),
+            key=lambda x: min(t.priority for t in x[1]),
+        )
+
+        for dataset_idx, (dataset_id, ds_tiles) in enumerate(sorted_datasets):
+            pub_dates = [t.publication_date for t in ds_tiles]
+            earliest = min(pub_dates)
+            latest = max(pub_dates)
+            priority = ds_tiles[0].priority
+
+            lines.extend(
+                [
+                    "",
+                    f"Project [{priority}] {dataset_id}",
+                    f"  Publication dates: {earliest.date()} → {latest.date()}",
+                    f"  Total tiles: {len(ds_tiles)}",
+                    f"  Strategy: {'BASE LAYER (oldest)' if priority == 0 else f'OVERLAY (higher priority, overwrites previous projects)'}",
+                    "",
+                ]
+            )
+
+            # Sort tiles within each dataset by tile_id for readability
+            sorted_tiles = sorted(ds_tiles, key=lambda t: t.tile_id)
+            for tile in sorted_tiles:
+                bounds = tile.bounds_wgs84
+                bounds_str = f"({bounds.min_x:7.3f}, {bounds.min_y:7.3f}) → ({bounds.max_x:7.3f}, {bounds.max_y:7.3f})"
+                lines.append(f"  Tile: {tile.tile_id}")
+                lines.append(f"    Bounds: {bounds_str}")
+                lines.append(f"    URL: {tile.download_url}")
+
+        lines.append("\n" + "=" * 100)
         return "\n".join(lines)

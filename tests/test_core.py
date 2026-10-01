@@ -68,6 +68,59 @@ class TestTileModels:
         assert tile.priority == 0
 
 
+class TestAOILoading:
+    """Validate AOI coordinates before querying TNM."""
+
+    def test_parquet_nad83_reprojects_to_wgs84(self, tmp_path):
+        import geopandas as gpd
+
+        parquet = tmp_path / "aoi.parquet"
+        gpd.GeoDataFrame(
+            geometry=[box(-84.05, 37.47, -83.89, 37.63)], crs="EPSG:4269"
+        ).to_parquet(parquet)
+        aoi = AOI.from_file(str(parquet))
+
+        assert aoi.crs == "EPSG:4326"
+        assert all(abs(value) < 180 for value in aoi.bounds().as_tuple())
+
+    def test_parquet_rejects_non_finite_reprojection(self, tmp_path, monkeypatch):
+        import geopandas as gpd
+
+        parquet = tmp_path / "aoi.parquet"
+        gpd.GeoDataFrame(
+            geometry=[box(-84.05, 37.47, -83.89, 37.63)], crs="EPSG:4269"
+        ).to_parquet(parquet)
+
+        def invalid_transform(self, crs):
+            return gpd.GeoDataFrame(geometry=[box(float("inf"), 0, float("inf"), 1)], crs=crs)
+
+        monkeypatch.setattr(gpd.GeoDataFrame, "to_crs", invalid_transform)
+        with pytest.raises(ValueError, match="non-finite coordinates.*PROJ datum grids"):
+            AOI.from_file(str(parquet))
+
+    def test_parquet_rejects_unknown_crs(self, tmp_path):
+        import geopandas as gpd
+
+        parquet = tmp_path / "aoi.parquet"
+        gpd.GeoDataFrame(geometry=[box(-84.05, 37.47, -83.89, 37.63)]).to_parquet(parquet)
+
+        with pytest.raises(ValueError, match="no CRS"):
+            AOI.from_file(str(parquet))
+
+    def test_parquet_unions_multiple_geometries(self, tmp_path):
+        import geopandas as gpd
+
+        parquet = tmp_path / "aoi.parquet"
+        gpd.GeoDataFrame(
+            geometry=[box(-75, 40, -74.9, 40.1), box(-74.8, 40, -74.7, 40.1)],
+            crs="EPSG:4326",
+        ).to_parquet(parquet)
+
+        aoi = AOI.from_file(str(parquet))
+        assert aoi.geometry.geom_type == "MultiPolygon"
+        assert aoi.bounds().as_tuple() == (-75, 40, -74.7, 40.1)
+
+
 class TestPrioritization:
     """Test dataset prioritization logic."""
 

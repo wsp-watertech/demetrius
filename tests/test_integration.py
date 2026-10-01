@@ -53,10 +53,19 @@ class TestCLIInspect:
         ]
 
         # Mock TNM query
-        with patch("src.demetrius.cli.TNMTileSource") as mock_source:
+        with (
+            patch("src.demetrius.cli.TNMTileSource") as mock_source,
+            patch("src.demetrius.project_boundaries.ProjectBoundaries.from_usgs") as mock_bounds,
+        ):
             mock_instance = Mock()
             mock_instance.search.return_value = mock_tiles
             mock_source.return_value = mock_instance
+            from src.demetrius.project_boundaries import ProjectBoundaries
+            import geopandas as gpd
+
+            mock_bounds.return_value = ProjectBoundaries(
+                gpd.GeoDataFrame(geometry=[box(-74.5, 40.0, -74.4, 40.1)], crs="EPSG:4326")
+            )
 
             result = runner.invoke(
                 inspect,
@@ -66,6 +75,7 @@ class TestCLIInspect:
             assert result.exit_code == 0
             assert "Inspection Report" in result.output
             assert "PA_County_2018" in result.output
+            mock_bounds.assert_called_once()
 
 
 class TestManifest:

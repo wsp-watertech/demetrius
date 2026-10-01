@@ -92,8 +92,8 @@ def batch_process(
     no_overviews : bool, default=False
         Skip building overview pyramids in the output COGs for every AOI.
     project_bounds : ProjectBoundaries | str | Path | None
-        Project boundaries instance, or a path to load one from. Loaded once
-        and reused across all AOIs.
+        Project boundaries instance or file path (loaded once for all AOIs).
+        If omitted, query USGS project footprints for each AOI.
     require_full_coverage : bool, default=False
         Require full coverage of each AOI by project boundaries.
     data_dir : str | Path | None

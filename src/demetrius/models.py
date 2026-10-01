@@ -114,8 +114,10 @@ class Tile(BaseModel):
     id: str = Field(..., description="Unique tile identifier")
     dataset_id: str = Field(..., description="Dataset identifier extracted from TNM title")
     tile_id: str = Field(..., description="Tile coordinate/ID (e.g., 'x38y448')")
-    publication_date: datetime = Field(..., description="Publication date for priority sorting")
-    last_updated: datetime = Field(..., description="Last update timestamp (priority fallback)")
+    publication_date: datetime = Field(..., description="TNM product publication date")
+    last_updated: datetime = Field(..., description="TNM product last update")
+    flight_start: Optional[datetime] = Field(default=None, description="Lidar acquisition start date")
+    flight_end: Optional[datetime] = Field(default=None, description="Lidar acquisition end date")
     download_url: str = Field(..., description="Direct download URL from TNM")
     bounds_wgs84: BoundingBox = Field(..., description="Bounding box in EPSG:4326")
     priority: int = Field(..., description="Dataset priority (0=newest, 1, 2...)")
@@ -326,6 +328,7 @@ class AOI(BaseModel):
             If the file contains no geometries.
         """
         import geopandas as gpd
+        from math import isfinite
         from pathlib import Path
 
         path_obj = Path(path)
@@ -339,12 +342,23 @@ class AOI(BaseModel):
         if gdf.empty:
             raise ValueError(f"No geometries found in {path}")
 
+        if gdf.crs is None:
+            raise ValueError(f"AOI in {path} has no CRS; assign one before processing")
+
         # Convert to WGS84 if not already
-        if gdf.crs and gdf.crs.to_epsg() != 4326:
+        if gdf.crs.to_epsg() != 4326:
             gdf = gdf.to_crs("EPSG:4326")
 
+        if gdf.geometry.isna().any() or gdf.geometry.is_empty.any() or not all(
+            isfinite(value) for value in gdf.total_bounds
+        ):
+            raise ValueError(
+                f"AOI in {path} has empty or non-finite coordinates after conversion to "
+                "EPSG:4326; verify its CRS and installed PROJ datum grids (proj-data)"
+            )
+
         if len(gdf) > 1:
-            geometry = gdf.unary_union
+            geometry = gdf.geometry.union_all()
         else:
             geometry = gdf.iloc[0].geometry
 

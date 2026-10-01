@@ -152,7 +152,8 @@ def run_pipeline(
         disable for outputs primarily consumed by tools reading at full
         resolution (e.g. hydrologic models).
     project_bounds : ProjectBoundaries | str | Path | None
-        Project boundaries instance, or a path to load one from.
+        Project boundaries instance or file path. If omitted, fetch 1-meter DEM
+        project footprints from the USGS Elevation Index.
     require_full_coverage : bool, default=False
         Require full coverage of the original AOI by project boundaries.
     data_dir : str | Path | None
@@ -199,7 +200,7 @@ def run_pipeline(
         else:
             aoi_obj = AOI.from_file(str(aoi), buffer=buffer)
 
-        # Resolve project bounds
+        # Resolve explicitly supplied project bounds; process-only uses the saved manifest.
         proj_bounds: Optional[ProjectBoundaries]
         if isinstance(project_bounds, ProjectBoundaries) or project_bounds is None:
             proj_bounds = project_bounds
@@ -290,6 +291,10 @@ def run_pipeline(
                 buffered_bbox = aoi_obj.bounds()
 
             all_tiles = source.search(buffered_bbox)
+
+            if proj_bounds is None:
+                _report("Querying USGS 1-meter DEM project footprints...")
+                proj_bounds = ProjectBoundaries.from_usgs(buffered_bbox)
 
             _report("Filtering tiles by AOI intersection...")
             filtered_tiles = filter_tiles_by_aoi(all_tiles, aoi_obj, proj_bounds)

@@ -25,8 +25,8 @@ flight range and the TNM product publication date separately.
 
 **Conda (recommended for GDAL and local datum grids):** from a checkout of
 this repository, create the environment specified in `environment.yml`. It
-installs Python, GDAL, pyproj and `proj-data` from conda-forge, then installs
-demetrius and its Python dependencies.
+installs Python, GDAL, pyproj, `proj-data`, and the Python dependencies from
+conda-forge, then installs demetrius into that environment.
 
 ```bash
 git clone https://github.com/wsp-watertech/demetrius.git
@@ -65,6 +65,41 @@ without Conda, provide compatible GDAL/PROJ system packages and datum grids.
 - **Python**: 3.12 or higher
 - **GDAL**: Command-line tools (`gdalbuildvrt`, `gdalwarp`, `gdal_translate`)
 - **PROJ datum grids**: `proj-data` for local NAD83 transformations; see below.
+
+### Container and task execution
+
+The Docker image includes the Conda environment, GDAL command-line tools, and
+local PROJ datum grids. Build it locally, then pass a CLI subcommand and its
+arguments after the image name:
+
+```bash
+docker build -t demetrius .
+mkdir -p output
+docker run --rm --user "$(id -u):$(id -g)" \
+  --mount "type=bind,src=$(pwd)/site.geojson,dst=/input/site.geojson,readonly" \
+  --mount "type=bind,src=$(pwd)/output,dst=/work" \
+  demetrius process --aoi /input/site.geojson --output /work/dem.tif
+```
+
+For GitHub releases tagged `v*.*.*`, the release workflow also publishes an
+image such as `ghcr.io/wsp-watertech/demetrius:v0.1.0b1`. Use that same
+`process ...` argument list as the container command for AWS Batch, ECS
+Fargate, or another container task runner. GHCR packages can be private by
+default; configure registry credentials for the task or make the package
+public before deploying it. The default user is UID 10001;
+ensure any output mount is writable by that UID. `/work` is the working
+directory; downloads and temporary GDAL files use `/tmp` by default. Size
+the task's ephemeral storage for both the downloaded tiles and intermediate
+rasters; Fargate's default storage may be too small for large DEMs. Mount
+durable storage such as EFS for the AOI and output, or explicitly stage inputs
+and upload outputs with a separate task: the CLI does not read or write S3
+URLs directly. Output and manifest files left only on ephemeral storage are
+lost when the task exits. Set `TMPDIR`, `CPL_TMPDIR`, or `DEMETRIUS_DATA_DIR`
+to writable paths if using separate scratch storage.
+
+The image sets `PROJ_DATA` to the bundled Conda grids and disables remote PROJ
+grid downloads. If additional grids must be fetched, opt in with
+`PROJ_NETWORK=ON` and configure the CA bundle as described below.
 
 ## Configuration
 

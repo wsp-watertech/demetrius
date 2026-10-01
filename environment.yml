@@ -6,15 +6,15 @@ dependencies:
   - gdal=3.8.4
   - pyproj>=3.6
   - proj-data
+  - click>=8.0
+  - geopandas>=1.1.4
+  - httpx>=0.28.1
+  - pydantic>=2.0
+  - pyarrow>=15.0
+  - shapely>=2.0
+  - pytest>=7.0
+  - pytest-cov>=4.0
+  - ruff>=0.1
   - pip
   - pip:
-    - click>=8.0
-    - geopandas>=1.1.4
-    - httpx>=0.28.1
-    - pydantic>=2.0
-    - pyarrow>=15.0
-    - shapely>=2.0
-    - pytest>=7.0
-    - pytest-cov>=4.0
-    - ruff>=0.1
     - -e .

@@ -10,11 +10,14 @@ import logging
 import os
 import tempfile
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Literal, Optional, Union
+from typing import Literal
 
-from .models import AOI
+from shapely.errors import GEOSException
+
+from .models import AOI, Tile
 from .project_boundaries import ProjectBoundaries
 
 logger = logging.getLogger(__name__)
@@ -93,30 +96,30 @@ class PipelineResult:
 
     name: str
     status: PipelineStatus
-    output_path: Optional[Path] = None
-    manifest_path: Optional[Path] = None
+    output_path: Path | None = None
+    manifest_path: Path | None = None
     tile_count: int = 0
     dataset_count: int = 0
-    error: Optional[str] = None
+    error: str | None = None
 
 
 def run_pipeline(
-    aoi: Union[AOI, str, Path],
-    output: Union[str, Path],
+    aoi: AOI | str | Path,
+    output: str | Path,
     *,
     name: str = "dem",
-    output_crs: Optional[str] = None,
+    output_crs: str | None = None,
     ffrd: bool = False,
     buffer: int = 0,
-    cellsize: Optional[float] = None,
+    cellsize: float | None = None,
     no_snap: bool = False,
     no_clip: bool = False,
     no_overviews: bool = False,
-    project_bounds: Optional[Union[ProjectBoundaries, str, Path]] = None,
+    project_bounds: ProjectBoundaries | str | Path | None = None,
     require_full_coverage: bool = False,
-    data_dir: Optional[Union[str, Path]] = None,
+    data_dir: str | Path | None = None,
     mode: PipelineMode = "full",
-    progress_cb: Optional[ProgressCallback] = None,
+    progress_cb: ProgressCallback | None = None,
 ) -> PipelineResult:
     """Run the full demetrius DEM pipeline for a single AOI.
 
@@ -201,7 +204,7 @@ def run_pipeline(
             aoi_obj = AOI.from_file(str(aoi), buffer=buffer)
 
         # Resolve explicitly supplied project bounds; process-only uses the saved manifest.
-        proj_bounds: Optional[ProjectBoundaries]
+        proj_bounds: ProjectBoundaries | None
         if isinstance(project_bounds, ProjectBoundaries) or project_bounds is None:
             proj_bounds = project_bounds
         else:
@@ -281,7 +284,7 @@ def run_pipeline(
                             max_x=buffered_geom_wgs84.bounds[2],
                             max_y=buffered_geom_wgs84.bounds[3],
                         )
-                except Exception as e:
+                except (ValueError, RuntimeError, GEOSException) as e:
                     logger.warning(
                         f"[{name}] Error computing buffered geometry in output CRS: {e}. "
                         "Using Web Mercator-buffered bounds."
@@ -310,7 +313,7 @@ def run_pipeline(
             _report("Validating coverage...")
             validate_coverage(prioritized_tiles, aoi_obj, proj_bounds, require_full_coverage)
 
-            dataset_count = len(set(t.dataset_id for t in prioritized_tiles))
+            dataset_count = len({t.dataset_id for t in prioritized_tiles})
             _report(f"Found {len(prioritized_tiles)} tiles from {dataset_count} datasets")
 
             manifest = Manifest(aoi_obj, prioritized_tiles, buffer, cellsize)
@@ -334,7 +337,7 @@ def run_pipeline(
             aoi_obj = manifest.aoi
             _report(f"Loaded {len(prioritized_tiles)} tiles from manifest")
 
-        dataset_count = len(set(t.dataset_id for t in prioritized_tiles))
+        dataset_count = len({t.dataset_id for t in prioritized_tiles})
 
         # Step 2: Download tiles
         if mode != "process-only":
@@ -360,7 +363,7 @@ def run_pipeline(
             mosaicker = VRTMosaicker(Path(tmpdir))
 
             # Group tiles by (dataset_id, crs) to create separate VRTs for each projection
-            from .crs import get_crs_from_raster, extract_utm_zone
+            from .crs import get_crs_from_raster
 
             datasets_by_crs: dict[tuple[str, str], list[Tile]] = defaultdict(list)
             for tile in downloaded_tiles:
@@ -438,5 +441,5 @@ def run_pipeline(
         )
 
     except Exception as e:
-        logger.error(f"[{name}] Pipeline failed: {e}", exc_info=True)
+        logger.exception("[%s] Pipeline failed", name)
         return PipelineResult(name=name, status="failed", error=str(e))

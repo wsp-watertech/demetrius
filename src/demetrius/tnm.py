@@ -3,7 +3,7 @@
 import logging
 import time
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
@@ -39,7 +39,7 @@ class TNMTileSource(TileSource):
         """
         self.timeout = timeout
         self.client = httpx.Client(timeout=timeout)
-        self._sciencebase_cache: dict[str, tuple[Optional[datetime], Optional[datetime]]] = {}
+        self._sciencebase_cache: dict[str, tuple[datetime | None, datetime | None]] = {}
 
     def search(self, aoi_bbox: BoundingBox) -> list[Tile]:
         """Search TNM for tiles intersecting bounding box.
@@ -88,7 +88,7 @@ class TNMTileSource(TileSource):
 
             try:
                 data = response.json()
-            except ValueError as e:
+            except (TypeError, ValueError) as e:
                 raise ValueError(f"TNM API returned invalid JSON: {e}") from e
 
             response_total = data.get("total", 0)
@@ -100,8 +100,8 @@ class TNMTileSource(TileSource):
                 logger.debug(f"Total items from TNM API: {total}")
             elif total is None and response_total == 0:
                 logger.debug(
-                    f"TNM API returned total=0 (possibly transient API state); "
-                    f"continuing pagination until empty response"
+                    "TNM API returned total=0 (possibly transient API state); "
+                    "continuing pagination until empty response"
                 )
 
             logger.debug(f"Fetched {len(items)} items (offset={offset}, total={total})")
@@ -292,14 +292,14 @@ class TNMTileSource(TileSource):
             If the date string cannot be parsed.
         """
         try:
-            parsed = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(date_str)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"Could not parse date: {date_str}") from exc
         return parsed.replace(tzinfo=None)
 
     def _fetch_sciencebase_flight_dates(
-        self, metaUrl: Optional[str]
-    ) -> tuple[Optional[datetime], Optional[datetime]]:
+        self, metaUrl: str | None
+    ) -> tuple[datetime | None, datetime | None]:
         """Fetch lidar acquisition start and end dates from ScienceBase metadata.
 
         Parameters
@@ -327,10 +327,10 @@ class TNMTileSource(TileSource):
             data = response.json()
 
             if not isinstance(data, dict):
-                raise ValueError(f"Invalid ScienceBase metadata for {metaUrl}")
+                raise TypeError(f"Invalid ScienceBase metadata for {metaUrl}")
             dates = data.get("dates", [])
             if not isinstance(dates, list):
-                raise ValueError(f"Invalid ScienceBase dates for {metaUrl}")
+                raise TypeError(f"Invalid ScienceBase dates for {metaUrl}")
             parsed_dates: dict[str, datetime] = {}
             for entry in dates:
                 if isinstance(entry, dict) and entry.get("type") in ("Start", "End"):

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import geopandas as gpd
 import httpx
+from shapely.errors import GEOSException
 from shapely.geometry.base import BaseGeometry
 
 from .models import BoundingBox
@@ -86,14 +87,14 @@ class ProjectBoundaries:
                     )
                 else:
                     gdf = gdf_converted
-            except Exception as e:
+            except (ValueError, RuntimeError, GEOSException) as e:
                 logger.warning(
                     f"CRS conversion failed: {e}. Keeping geometries in original CRS ({gdf.crs})."
                 )
 
         self.gdf = gdf.reset_index(drop=True)
         self.spatial_index = self.gdf.sindex
-        self._buffered_cache: dict[float, "BaseGeometry"] = {}  # Cache for buffered boundaries
+        self._buffered_cache: dict[float, BaseGeometry] = {}  # Cache for buffered boundaries
         logger.info(f"Loaded {len(self.gdf)} project boundaries")
 
     @classmethod
@@ -137,8 +138,8 @@ class ProjectBoundaries:
                     gdf = gpd.read_parquet(path)
                 else:
                     gdf = gpd.read_file(path)
-        except Exception as e:
-            raise ValueError(f"Failed to read project boundaries: {e}")
+        except (OSError, ValueError, RuntimeError) as e:
+            raise ValueError(f"Failed to read project boundaries: {e}") from e
 
         return cls(gdf)
 
@@ -352,8 +353,6 @@ class ProjectBoundaries:
         if buffer_meters in self._buffered_cache:
             buffered_coverage = self._buffered_cache[buffer_meters]
             return geometry.intersects(buffered_coverage)
-
-        import geopandas as gpd
 
         # Compute and cache the buffered boundaries (only done once per buffer distance)
         gdf_mercator = self.gdf.to_crs("EPSG:3857")

@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 
-from .models import Tile, BoundingBox
+from .models import BoundingBox, Tile
 
 
 class TileSource(ABC):
@@ -32,4 +32,3 @@ class TileSource(ABC):
         ValueError
             If the search fails or returns invalid data.
         """
-        pass

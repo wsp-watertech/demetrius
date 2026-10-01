@@ -4,9 +4,9 @@ import logging
 import os
 import shutil
 import subprocess
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Callable, Optional, Sequence
 
 import httpx
 
@@ -24,10 +24,10 @@ class TileDownloader:
 
     def __init__(
         self,
-        data_dir: Optional[Path] = None,
+        data_dir: Path | None = None,
         max_workers: int = 4,
         timeout: float = 60.0,
-        progress_callback: Optional[Callable[[int, int], None]] = None,
+        progress_callback: Callable[[int, int], None] | None = None,
     ):
         """Initialize downloader.
 
@@ -88,7 +88,7 @@ class TileDownloader:
                     downloaded_tile = future.result()
                     downloaded.append(downloaded_tile)
                     completed_count += 1
-                except Exception as e:
+                except (OSError, ValueError, httpx.HTTPError, shutil.Error) as e:
                     logger.error(f"Failed to download tile {tile.id}: {e}")
                     failed.append(tile)
                     completed_count += 1
@@ -152,8 +152,7 @@ class TileDownloader:
                 # Download to temporary file first
                 temp_path = local_path.with_suffix(".tmp")
                 with open(temp_path, "wb") as f:
-                    for chunk in response.iter_bytes(chunk_size=8192):
-                        f.write(chunk)
+                    f.writelines(response.iter_bytes(chunk_size=8192))
 
                 # Move to final location
                 shutil.move(str(temp_path), str(local_path))
@@ -162,7 +161,7 @@ class TileDownloader:
             tile.local_path = str(local_path)
             return tile
 
-        except Exception as e:
+        except (OSError, httpx.HTTPError, shutil.Error) as e:
             if attempt < MAX_RETRIES:
                 logger.warning(f"Attempt {attempt} failed for tile {tile.id}, retrying... ({e})")
                 import time
@@ -218,7 +217,7 @@ class TileDownloader:
                     result = future.result()
                     if result is not None:
                         valid_tiles.append(result)
-                except Exception as e:
+                except (OSError, ValueError, subprocess.SubprocessError, shutil.Error) as e:
                     logger.error(f"Tile {tile.id} could not be validated or re-encoded: {e}")
                     invalid_tiles.append(tile)
 
@@ -231,7 +230,7 @@ class TileDownloader:
 
         return valid_tiles
 
-    def _validate_single(self, tile: Tile) -> Optional[Tile]:
+    def _validate_single(self, tile: Tile) -> Tile | None:
         """Validate a single tile and re-encode if codec issues detected.
 
         Parameters
@@ -253,6 +252,7 @@ class TileDownloader:
                 capture_output=True,
                 timeout=10,
                 text=True,
+                check=False,
             )
 
             # Look for codec errors in stderr
@@ -276,11 +276,11 @@ class TileDownloader:
         except subprocess.TimeoutExpired:
             logger.warning(f"gdalinfo timeout for {tile.id}, attempting re-encode")
             return self._reencode_tile(tile, local_path)
-        except Exception as e:
+        except (OSError, subprocess.SubprocessError) as e:
             logger.warning(f"Error validating {tile.id}: {e}, attempting re-encode")
             return self._reencode_tile(tile, local_path)
 
-    def _reencode_tile(self, tile: Tile, original_path: Path) -> Optional[Tile]:
+    def _reencode_tile(self, tile: Tile, original_path: Path) -> Tile | None:
         """Re-encode tile to standard DEFLATE compression.
 
         Parameters
@@ -318,6 +318,7 @@ class TileDownloader:
                 capture_output=True,
                 timeout=60,
                 text=True,
+                check=False,
             )
 
             if result.returncode != 0:
@@ -330,6 +331,7 @@ class TileDownloader:
                 capture_output=True,
                 timeout=10,
                 text=True,
+                check=False,
             )
 
             if verify_result.returncode != 0:
@@ -345,6 +347,6 @@ class TileDownloader:
         except subprocess.TimeoutExpired:
             logger.error(f"Re-encoding timeout for {tile.id}")
             return None
-        except Exception as e:
+        except (OSError, subprocess.SubprocessError, shutil.Error) as e:
             logger.error(f"Failed to re-encode {tile.id}: {e}")
             return None

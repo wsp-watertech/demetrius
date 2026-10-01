@@ -3,7 +3,7 @@
 import json
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from .models import AOI, BoundingBox, Tile
 
@@ -18,7 +18,7 @@ class Manifest:
         aoi: AOI,
         tiles: list[Tile],
         buffer: int = 0,
-        cellsize: Optional[float] = None,
+        cellsize: float | None = None,
     ):
         """Create manifest from AOI and tiles.
 

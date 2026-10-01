@@ -84,9 +84,11 @@ demetrius process --aoi site.shp --output dem.tif
 
 ```python
 import os
+
 os.environ["TMPDIR"] = "/fast/ssd/temp"
 
 from demetrius.pipeline import run_pipeline
+
 result = run_pipeline(...)
 ```
 
@@ -167,11 +169,9 @@ demetrius process --aoi site.shp --output dem.tif --project-bounds boundaries.gp
 
 ```python
 from demetrius.pipeline import run_pipeline
+
 result = run_pipeline(
-    aoi,
-    output_path,
-    project_bounds=boundaries,
-    data_dir="/scratch/demetrius_tiles"
+    aoi, output_path, project_bounds=boundaries, data_dir="/scratch/demetrius_tiles"
 )
 ```
 

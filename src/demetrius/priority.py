@@ -2,7 +2,7 @@
 
 import logging
 from collections import defaultdict
-from typing import Sequence
+from collections.abc import Sequence
 
 from .models import Tile
 

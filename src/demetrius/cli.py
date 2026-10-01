@@ -22,7 +22,6 @@ logger = logging.getLogger(__name__)
 @click.group()
 def cli():
     """demetrius: High-resolution DEM assembly from USGS 3DEP data."""
-    pass
 
 
 @cli.command()
@@ -234,9 +233,9 @@ def inspect(aoi: str, project_bounds: str, verbose: bool) -> None:
             click.echo("")
             click.echo(report.verbose_details())
 
-    except Exception as e:
+    except (OSError, TypeError, ValueError, RuntimeError) as e:
         click.echo(f"✗ Error: {e}", err=True)
-        raise click.Abort()
+        raise click.Abort() from e
 
 
 @cli.command()

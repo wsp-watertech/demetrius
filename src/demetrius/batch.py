@@ -9,7 +9,6 @@ other code can call directly.
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Optional, Union
 
 import geopandas as gpd
 
@@ -20,7 +19,7 @@ from .project_boundaries import ProjectBoundaries
 logger = logging.getLogger(__name__)
 
 
-def _load_geodataframe(source: Union[str, Path, gpd.GeoDataFrame]) -> gpd.GeoDataFrame:
+def _load_geodataframe(source: str | Path | gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     """Load a GeoDataFrame from a path, or pass one through unchanged.
 
     Parameters
@@ -44,20 +43,20 @@ def _load_geodataframe(source: Union[str, Path, gpd.GeoDataFrame]) -> gpd.GeoDat
 
 
 def batch_process(
-    source: Union[str, Path, gpd.GeoDataFrame],
+    source: str | Path | gpd.GeoDataFrame,
     name_field: str,
-    output_dir: Union[str, Path],
+    output_dir: str | Path,
     *,
-    output_crs: Optional[str] = None,
+    output_crs: str | None = None,
     ffrd: bool = False,
     buffer: float = 0,
-    cellsize: Optional[float] = None,
+    cellsize: float | None = None,
     no_snap: bool = False,
     no_clip: bool = False,
     no_overviews: bool = False,
-    project_bounds: Optional[Union[ProjectBoundaries, str, Path]] = None,
+    project_bounds: ProjectBoundaries | str | Path | None = None,
     require_full_coverage: bool = False,
-    data_dir: Optional[Union[str, Path]] = None,
+    data_dir: str | Path | None = None,
     mode: str = "full",
     max_workers: int = 1,
 ) -> list[PipelineResult]:
@@ -157,7 +156,7 @@ def batch_process(
             mode=mode,
         )
 
-    results: list[Optional[PipelineResult]] = [None] * len(gdf)
+    results: list[PipelineResult | None] = [None] * len(gdf)
 
     if max_workers <= 1:
         for idx, (_, row) in enumerate(gdf.iterrows()):

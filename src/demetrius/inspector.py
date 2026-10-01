@@ -1,7 +1,7 @@
 """AOI inspection and analysis without downloading tiles."""
 
 import logging
-from typing import Sequence
+from collections.abc import Sequence
 
 from .models import AOI, Tile
 
@@ -180,8 +180,10 @@ class InspectionReport:
         lines.extend(
             [
                 "\nArea of Interest:",
-                f"  Bounds: ({bounds.min_x:.4f}, {bounds.min_y:.4f}) → "
-                f"({bounds.max_x:.4f}, {bounds.max_y:.4f})",
+                (
+                    f"  Bounds: ({bounds.min_x:.4f}, {bounds.min_y:.4f}) → "
+                    f"({bounds.max_x:.4f}, {bounds.max_y:.4f})"
+                ),
                 f"  Buffer: {self.aoi.buffer} m",
             ]
         )
@@ -335,7 +337,7 @@ class InspectionReport:
                     f"  LiDAR flight dates: {flight_range}",
                     f"  Publication dates: {publication_range}",
                     f"  Total tiles: {len(ds_tiles)}",
-                    f"  Strategy: {'BASE LAYER (oldest)' if priority == 0 else f'OVERLAY (higher priority, overwrites previous projects)'}",
+                    f"  Strategy: {'BASE LAYER (oldest)' if priority == 0 else 'OVERLAY (higher priority, overwrites previous projects)'}",
                     "",
                 ]
             )

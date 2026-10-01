@@ -4,7 +4,7 @@ import logging
 import os
 import subprocess
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import ClassVar
 
 import numpy as np
 import pyproj
@@ -16,7 +16,7 @@ class Snapper:
     """Snap raster to grid aligned with cell boundaries."""
 
     # Linear unit conversion factors to meters (horizontal/projected CRS)
-    UNIT_TO_METERS = {
+    UNIT_TO_METERS: ClassVar[dict[str, float]] = {
         "metre": 1.0,
         "meter": 1.0,
         "m": 1.0,
@@ -29,7 +29,7 @@ class Snapper:
     }
 
     @staticmethod
-    def get_linear_units(crs: str) -> Optional[str]:
+    def get_linear_units(crs: str) -> str | None:
         """Get linear units of a projected CRS.
 
         Parameters
@@ -53,7 +53,7 @@ class Snapper:
                         return axis.unit_name.lower()
 
             return None
-        except Exception as e:
+        except (ValueError, RuntimeError) as e:
             logger.warning(f"Could not determine linear units for {crs}: {e}")
             return None
 
@@ -101,7 +101,7 @@ class Snapper:
         return 1.0
 
     @staticmethod
-    def get_raster_bounds(raster_path: Path) -> Tuple[float, float, float, float]:
+    def get_raster_bounds(raster_path: Path) -> tuple[float, float, float, float]:
         """Get raster bounds from ``gdalinfo`` output.
 
         Parameters
@@ -167,8 +167,8 @@ class Snapper:
 
             raise ValueError(f"Could not parse bounds from {raster_path}")
 
-        except Exception as e:
-            raise RuntimeError(f"Failed to get raster bounds: {e}")
+        except (OSError, ValueError, subprocess.SubprocessError) as e:
+            raise RuntimeError(f"Failed to get raster bounds: {e}") from e
 
     @staticmethod
     def snap_bounds(
@@ -177,7 +177,7 @@ class Snapper:
         maxx: float,
         maxy: float,
         cellsize: float,
-    ) -> Tuple[float, float, float, float]:
+    ) -> tuple[float, float, float, float]:
         """Snap bounds to grid aligned with cell size.
 
         Snaps lower-left corner down/left and upper-right corner up/right

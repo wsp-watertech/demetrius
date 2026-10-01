@@ -5,15 +5,14 @@ import logging
 import os
 import re
 import subprocess
-from pathlib import Path
-from typing import Optional, Sequence
+from collections.abc import Sequence
 
 from .models import Tile
 
 logger = logging.getLogger(__name__)
 
 
-def get_crs_from_raster(raster_path: str) -> Optional[str]:
+def get_crs_from_raster(raster_path: str) -> str | None:
     """Extract CRS from a raster file using gdalinfo.
 
     Parameters
@@ -72,12 +71,12 @@ def get_crs_from_raster(raster_path: str) -> Optional[str]:
     except FileNotFoundError:
         logger.debug("gdalinfo not found")
         return None
-    except Exception as e:
+    except (OSError, ValueError, TypeError, KeyError) as e:
         logger.debug(f"Failed to detect CRS from {raster_path}: {e}")
         return None
 
 
-def extract_utm_zone(crs: Optional[str]) -> Optional[int]:
+def extract_utm_zone(crs: str | None) -> int | None:
     """Extract UTM zone number from EPSG code.
 
     Parameters

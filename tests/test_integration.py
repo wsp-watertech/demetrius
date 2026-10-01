@@ -1,16 +1,16 @@
 """Integration tests for demetrius CLI and full workflows."""
 
-import pytest
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import Mock, patch
 
+import pytest
 from click.testing import CliRunner
 from shapely.geometry import box
 
-from src.demetrius.cli import cli, process, inspect
-from src.demetrius.models import Tile, BoundingBox, AOI
+from src.demetrius.cli import cli, inspect, process
 from src.demetrius.manifest import Manifest
+from src.demetrius.models import AOI, BoundingBox, Tile
 
 
 class TestCLIInspect:
@@ -44,8 +44,8 @@ class TestCLIInspect:
                 id="test_tile_1",
                 dataset_id="PA_County_2018",
                 tile_id="x38y448",
-                publication_date=datetime(2021, 11, 18),
-                last_updated=datetime(2021, 11, 22),
+                publication_date=datetime(2021, 11, 18, tzinfo=UTC),
+                last_updated=datetime(2021, 11, 22, tzinfo=UTC),
                 download_url="https://example.com/tile1.tif",
                 bounds_wgs84=BoundingBox(min_x=-74.5, min_y=40.0, max_x=-74.4, max_y=40.1),
                 priority=0,
@@ -53,10 +53,20 @@ class TestCLIInspect:
         ]
 
         # Mock TNM query
-        with patch("src.demetrius.cli.TNMTileSource") as mock_source:
+        with (
+            patch("src.demetrius.cli.TNMTileSource") as mock_source,
+            patch("src.demetrius.project_boundaries.ProjectBoundaries.from_usgs") as mock_bounds,
+        ):
             mock_instance = Mock()
             mock_instance.search.return_value = mock_tiles
             mock_source.return_value = mock_instance
+            import geopandas as gpd
+
+            from src.demetrius.project_boundaries import ProjectBoundaries
+
+            mock_bounds.return_value = ProjectBoundaries(
+                gpd.GeoDataFrame(geometry=[box(-74.5, 40.0, -74.4, 40.1)], crs="EPSG:4326")
+            )
 
             result = runner.invoke(
                 inspect,
@@ -66,6 +76,7 @@ class TestCLIInspect:
             assert result.exit_code == 0
             assert "Inspection Report" in result.output
             assert "PA_County_2018" in result.output
+            mock_bounds.assert_called_once()
 
 
 class TestManifest:
@@ -80,8 +91,8 @@ class TestManifest:
                 id="test_tile_1",
                 dataset_id="PA_County_2018",
                 tile_id="x38y448",
-                publication_date=datetime(2021, 11, 18),
-                last_updated=datetime(2021, 11, 22),
+                publication_date=datetime(2021, 11, 18, tzinfo=UTC),
+                last_updated=datetime(2021, 11, 22, tzinfo=UTC),
                 download_url="https://example.com/tile1.tif",
                 bounds_wgs84=BoundingBox(min_x=-74.5, min_y=40.0, max_x=-74.4, max_y=40.1),
                 priority=0,
@@ -111,8 +122,8 @@ class TestManifest:
                 id="test_tile",
                 dataset_id="PA_County",
                 tile_id="x0y0",
-                publication_date=datetime(2021, 11, 18),
-                last_updated=datetime(2021, 11, 22),
+                publication_date=datetime(2021, 11, 18, tzinfo=UTC),
+                last_updated=datetime(2021, 11, 22, tzinfo=UTC),
                 download_url="https://example.com/tile.tif",
                 bounds_wgs84=BoundingBox(min_x=-74.5, min_y=40.0, max_x=-74.4, max_y=40.1),
                 priority=0,
@@ -141,8 +152,8 @@ class TestManifest:
                 id="test_tile",
                 dataset_id="PA_County",
                 tile_id="x0y0",
-                publication_date=datetime(2021, 11, 18),
-                last_updated=datetime(2021, 11, 22),
+                publication_date=datetime(2021, 11, 18, tzinfo=UTC),
+                last_updated=datetime(2021, 11, 22, tzinfo=UTC),
                 download_url="https://example.com/tile.tif",
                 bounds_wgs84=BoundingBox(min_x=-74.5, min_y=40.0, max_x=-74.4, max_y=40.1),
                 priority=0,
@@ -173,8 +184,8 @@ class TestManifest:
                 id="test_tile",
                 dataset_id="PA_County",
                 tile_id="x0y0",
-                publication_date=datetime(2021, 11, 18),
-                last_updated=datetime(2021, 11, 22),
+                publication_date=datetime(2021, 11, 18, tzinfo=UTC),
+                last_updated=datetime(2021, 11, 22, tzinfo=UTC),
                 download_url="https://example.com/tile.tif",
                 bounds_wgs84=BoundingBox(min_x=-74.5, min_y=40.0, max_x=-74.4, max_y=40.1),
                 priority=0,
@@ -214,8 +225,8 @@ class TestWorkflow:
                 id=f"tile_{i}_{ds}",
                 dataset_id=ds,
                 tile_id=f"x{i}y0",
-                publication_date=datetime(2020 + i, 1, 1),
-                last_updated=datetime(2020 + i, 1, 1),
+                publication_date=datetime(2020 + i, 1, 1, tzinfo=UTC),
+                last_updated=datetime(2020 + i, 1, 1, tzinfo=UTC),
                 download_url=f"https://example.com/tile_{i}_{ds}.tif",
                 bounds_wgs84=BoundingBox(
                     min_x=-74.5,
@@ -252,6 +263,7 @@ class TestGDALIntegration:
                 ["gdalbuildvrt", "--version"],
                 capture_output=True,
                 timeout=5,
+                check=False,
             )
             # If we got here, tool is available
             assert result.returncode == 0 or result.returncode == 1  # Version varies
@@ -267,6 +279,7 @@ class TestGDALIntegration:
                 ["gdalwarp", "--version"],
                 capture_output=True,
                 timeout=5,
+                check=False,
             )
             assert result.returncode == 0
         except FileNotFoundError:
@@ -281,6 +294,7 @@ class TestGDALIntegration:
                 ["gdal_translate", "--version"],
                 capture_output=True,
                 timeout=5,
+                check=False,
             )
             assert result.returncode == 0
         except FileNotFoundError:

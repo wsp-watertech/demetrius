@@ -1,7 +1,7 @@
 """Coverage validation and gap detection."""
 
 import logging
-from typing import Optional, Sequence
+from collections.abc import Sequence
 
 from .filtering import get_coverage_polygon
 from .models import AOI, Tile
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 def validate_coverage(
     tiles: Sequence[Tile],
     aoi: AOI,
-    project_bounds: Optional[ProjectBoundaries] = None,
+    project_bounds: ProjectBoundaries | None = None,
     require_full_coverage: bool = False,
 ) -> dict[str, bool | float]:
     """Validate tile coverage of original AOI.

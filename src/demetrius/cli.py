@@ -22,7 +22,6 @@ logger = logging.getLogger(__name__)
 @click.group()
 def cli():
     """demetrius: High-resolution DEM assembly from USGS 3DEP data."""
-    pass
 
 
 @cli.command()
@@ -81,9 +80,8 @@ def cli():
 )
 @click.option(
     "--project-bounds",
-    required=True,
     type=click.Path(exists=True),
-    help="Path to project boundaries (GeoParquet, GeoJSON, shapefile, etc.)",
+    help="Project boundaries file (default: query USGS 1-meter DEM project footprints)",
 )
 @click.option(
     "--require-full-coverage",
@@ -177,7 +175,7 @@ def process(
 @click.option(
     "--project-bounds",
     type=click.Path(exists=True),
-    help="Path to project boundaries (optional, for filtering tiles to project scope)",
+    help="Project boundaries file (default: query USGS 1-meter DEM project footprints)",
 )
 @click.option(
     "--verbose",
@@ -195,21 +193,22 @@ def inspect(aoi: str, project_bounds: str, verbose: bool) -> None:
         aoi_obj = AOI.from_file(aoi)
         click.echo(f"✓ Loaded AOI from {aoi}")
 
-        # Load project bounds if provided
-        project_bounds_obj = None
-        if project_bounds:
-            project_bounds_obj = ProjectBoundaries.from_file(project_bounds)
-            click.echo(f"✓ Loaded project boundaries from {project_bounds}")
-
         # Query TNM
         click.echo("Querying TNM for tiles...")
         source = TNMTileSource()
         buffered_bbox = aoi_obj.buffered_bounds()
         all_tiles = source.search(buffered_bbox)
 
+        if project_bounds:
+            project_bounds_obj = ProjectBoundaries.from_file(project_bounds)
+            click.echo(f"✓ Loaded project boundaries from {project_bounds}")
+        else:
+            click.echo("Querying USGS 1-meter DEM project footprints...")
+            project_bounds_obj = ProjectBoundaries.from_usgs(buffered_bbox)
+
         # Filter by AOI
         click.echo("Filtering tiles by AOI intersection...")
-        filtered_tiles = filter_tiles_by_aoi(all_tiles, aoi_obj)
+        filtered_tiles = filter_tiles_by_aoi(all_tiles, aoi_obj, project_bounds_obj)
 
         # Prioritize datasets
         click.echo("Prioritizing datasets...")
@@ -217,12 +216,11 @@ def inspect(aoi: str, project_bounds: str, verbose: bool) -> None:
 
         # Validate coverage
         click.echo("Validating coverage...")
-        require_full = project_bounds_obj is not None
         validate_coverage(
             prioritized_tiles,
             aoi_obj,
             project_bounds=project_bounds_obj,
-            require_full_coverage=require_full,
+            require_full_coverage=bool(project_bounds),
         )
 
         # Generate report
@@ -235,9 +233,9 @@ def inspect(aoi: str, project_bounds: str, verbose: bool) -> None:
             click.echo("")
             click.echo(report.verbose_details())
 
-    except Exception as e:
+    except (OSError, TypeError, ValueError, RuntimeError) as e:
         click.echo(f"✗ Error: {e}", err=True)
-        raise click.Abort()
+        raise click.Abort() from e
 
 
 @cli.command()
@@ -305,7 +303,7 @@ def inspect(aoi: str, project_bounds: str, verbose: bool) -> None:
 @click.option(
     "--project-bounds",
     type=click.Path(exists=True),
-    help="Path to project boundaries (GeoParquet, GeoJSON, shapefile, etc.)",
+    help="Project boundaries file (default: query USGS 1-meter DEM project footprints)",
 )
 @click.option(
     "--require-full-coverage",

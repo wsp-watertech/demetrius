@@ -1,16 +1,17 @@
 """Unit tests for core demetrius logic."""
 
-import pytest
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
-from src.demetrius.models import Tile, BoundingBox, AOI
-from src.demetrius.parser import parse_dataset_and_tile_ids
-from src.demetrius.priority import prioritize_datasets
-from src.demetrius.filtering import filter_tiles_by_aoi, get_coverage_polygon
+import pytest
+from shapely.geometry import box
+
 from src.demetrius.coverage import validate_coverage
 from src.demetrius.crs import detect_utm_zones_from_tiles, get_target_utm_for_tiles
-from shapely.geometry import box
+from src.demetrius.filtering import filter_tiles_by_aoi, get_coverage_polygon
+from src.demetrius.models import AOI, BoundingBox, Tile
+from src.demetrius.parser import parse_dataset_and_tile_ids
+from src.demetrius.priority import prioritize_datasets
 
 
 class TestDatasetParser:
@@ -58,14 +59,67 @@ class TestTileModels:
             id="test_tile",
             dataset_id="PA_3_County_2018",
             tile_id="x38y448",
-            publication_date=datetime(2021, 11, 18),
-            last_updated=datetime(2021, 11, 22),
+            publication_date=datetime(2021, 11, 18, tzinfo=UTC),
+            last_updated=datetime(2021, 11, 22, tzinfo=UTC),
             download_url="https://example.com/tile.tif",
             bounds_wgs84=bbox,
             priority=0,
         )
         assert tile.dataset_id == "PA_3_County_2018"
         assert tile.priority == 0
+
+
+class TestAOILoading:
+    """Validate AOI coordinates before querying TNM."""
+
+    def test_parquet_nad83_reprojects_to_wgs84(self, tmp_path):
+        import geopandas as gpd
+
+        parquet = tmp_path / "aoi.parquet"
+        gpd.GeoDataFrame(geometry=[box(-84.05, 37.47, -83.89, 37.63)], crs="EPSG:4269").to_parquet(
+            parquet
+        )
+        aoi = AOI.from_file(str(parquet))
+
+        assert aoi.crs == "EPSG:4326"
+        assert all(abs(value) < 180 for value in aoi.bounds().as_tuple())
+
+    def test_parquet_rejects_non_finite_reprojection(self, tmp_path, monkeypatch):
+        import geopandas as gpd
+
+        parquet = tmp_path / "aoi.parquet"
+        gpd.GeoDataFrame(geometry=[box(-84.05, 37.47, -83.89, 37.63)], crs="EPSG:4269").to_parquet(
+            parquet
+        )
+
+        def invalid_transform(self, crs):
+            return gpd.GeoDataFrame(geometry=[box(float("inf"), 0, float("inf"), 1)], crs=crs)
+
+        monkeypatch.setattr(gpd.GeoDataFrame, "to_crs", invalid_transform)
+        with pytest.raises(ValueError, match="non-finite coordinates.*PROJ datum grids"):
+            AOI.from_file(str(parquet))
+
+    def test_parquet_rejects_unknown_crs(self, tmp_path):
+        import geopandas as gpd
+
+        parquet = tmp_path / "aoi.parquet"
+        gpd.GeoDataFrame(geometry=[box(-84.05, 37.47, -83.89, 37.63)]).to_parquet(parquet)
+
+        with pytest.raises(ValueError, match="no CRS"):
+            AOI.from_file(str(parquet))
+
+    def test_parquet_unions_multiple_geometries(self, tmp_path):
+        import geopandas as gpd
+
+        parquet = tmp_path / "aoi.parquet"
+        gpd.GeoDataFrame(
+            geometry=[box(-75, 40, -74.9, 40.1), box(-74.8, 40, -74.7, 40.1)],
+            crs="EPSG:4326",
+        ).to_parquet(parquet)
+
+        aoi = AOI.from_file(str(parquet))
+        assert aoi.geometry.geom_type == "MultiPolygon"
+        assert aoi.bounds().as_tuple() == (-75, 40, -74.7, 40.1)
 
 
 class TestPrioritization:
@@ -78,8 +132,8 @@ class TestPrioritization:
                 id=f"tile_{i}",
                 dataset_id="PA_County_2018",
                 tile_id=f"x{i}y{i}",
-                publication_date=datetime(2021, 11, 18),
-                last_updated=datetime(2021, 11, 22),
+                publication_date=datetime(2021, 11, 18, tzinfo=UTC),
+                last_updated=datetime(2021, 11, 22, tzinfo=UTC),
                 download_url="http://example.com/tile.tif",
                 bounds_wgs84=BoundingBox(
                     min_x=-74.5 + i * 0.1,
@@ -103,8 +157,8 @@ class TestPrioritization:
                 id="tile_old",
                 dataset_id="PA_County_2018",
                 tile_id="x0y0",
-                publication_date=datetime(2020, 1, 1),
-                last_updated=datetime(2020, 1, 1),
+                publication_date=datetime(2020, 1, 1, tzinfo=UTC),
+                last_updated=datetime(2020, 1, 1, tzinfo=UTC),
                 download_url="http://example.com/tile1.tif",
                 bounds_wgs84=BoundingBox(min_x=-74.5, min_y=40.0, max_x=-74.4, max_y=40.1),
                 priority=-1,
@@ -113,8 +167,8 @@ class TestPrioritization:
                 id="tile_new",
                 dataset_id="PA_County_2021",
                 tile_id="x0y0",
-                publication_date=datetime(2021, 11, 18),
-                last_updated=datetime(2021, 11, 22),
+                publication_date=datetime(2021, 11, 18, tzinfo=UTC),
+                last_updated=datetime(2021, 11, 22, tzinfo=UTC),
                 download_url="http://example.com/tile2.tif",
                 bounds_wgs84=BoundingBox(min_x=-74.5, min_y=40.0, max_x=-74.4, max_y=40.1),
                 priority=-1,
@@ -139,8 +193,8 @@ class TestFiltering:
                 id="tile_1",
                 dataset_id="PA_County",
                 tile_id="x0y0",
-                publication_date=datetime(2021, 11, 18),
-                last_updated=datetime(2021, 11, 22),
+                publication_date=datetime(2021, 11, 18, tzinfo=UTC),
+                last_updated=datetime(2021, 11, 22, tzinfo=UTC),
                 download_url="http://example.com/tile1.tif",
                 bounds_wgs84=BoundingBox(min_x=-74.5, min_y=40.0, max_x=-74.4, max_y=40.1),
                 priority=0,
@@ -149,8 +203,8 @@ class TestFiltering:
                 id="tile_2",
                 dataset_id="PA_County",
                 tile_id="x1y1",
-                publication_date=datetime(2021, 11, 18),
-                last_updated=datetime(2021, 11, 22),
+                publication_date=datetime(2021, 11, 18, tzinfo=UTC),
+                last_updated=datetime(2021, 11, 22, tzinfo=UTC),
                 download_url="http://example.com/tile2.tif",
                 bounds_wgs84=BoundingBox(min_x=100.0, min_y=20.0, max_x=100.1, max_y=20.1),
                 priority=0,
@@ -171,8 +225,8 @@ class TestFiltering:
                 id=f"tile_{i}",
                 dataset_id="PA_County",
                 tile_id=f"x{i}y0",
-                publication_date=datetime(2021, 11, 18),
-                last_updated=datetime(2021, 11, 22),
+                publication_date=datetime(2021, 11, 18, tzinfo=UTC),
+                last_updated=datetime(2021, 11, 22, tzinfo=UTC),
                 download_url="http://example.com/tile.tif",
                 bounds_wgs84=BoundingBox(
                     min_x=-74.5 + i * 0.1,
@@ -203,8 +257,8 @@ class TestCoverageValidation:
                 id="tile_1",
                 dataset_id="PA_County",
                 tile_id="x0y0",
-                publication_date=datetime(2021, 11, 18),
-                last_updated=datetime(2021, 11, 22),
+                publication_date=datetime(2021, 11, 18, tzinfo=UTC),
+                last_updated=datetime(2021, 11, 22, tzinfo=UTC),
                 download_url="http://example.com/tile.tif",
                 bounds_wgs84=BoundingBox(min_x=-74.5, min_y=40.0, max_x=-74.3, max_y=40.2),
                 priority=0,
@@ -225,8 +279,8 @@ class TestCRS:
                 id="tile_1",
                 dataset_id="PA_County",
                 tile_id="x0y0",
-                publication_date=datetime(2021, 11, 18),
-                last_updated=datetime(2021, 11, 22),
+                publication_date=datetime(2021, 11, 18, tzinfo=UTC),
+                last_updated=datetime(2021, 11, 22, tzinfo=UTC),
                 download_url="http://example.com/tile.tif",
                 bounds_wgs84=BoundingBox(min_x=-74.5, min_y=40.0, max_x=-74.4, max_y=40.1),
                 priority=0,
@@ -244,8 +298,8 @@ class TestCRS:
                 id="tile_1",
                 dataset_id="PA_County",
                 tile_id="x0y0",
-                publication_date=datetime(2021, 11, 18),
-                last_updated=datetime(2021, 11, 22),
+                publication_date=datetime(2021, 11, 18, tzinfo=UTC),
+                last_updated=datetime(2021, 11, 22, tzinfo=UTC),
                 download_url="http://example.com/tile.tif",
                 bounds_wgs84=BoundingBox(min_x=-74.5, min_y=40.0, max_x=-74.4, max_y=40.1),
                 priority=0,

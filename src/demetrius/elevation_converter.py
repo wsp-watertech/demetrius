@@ -4,7 +4,7 @@ import logging
 import os
 import subprocess
 from pathlib import Path
-from typing import Optional
+from typing import ClassVar
 
 import pyproj
 
@@ -15,7 +15,7 @@ class ElevationConverter:
     """Convert elevation values to match CRS linear units using GDAL."""
 
     # Conversion factors to meters (linear/horizontal CRS units)
-    UNIT_TO_METERS = {
+    UNIT_TO_METERS: ClassVar[dict[str, float]] = {
         "metre": 1.0,
         "meter": 1.0,
         "m": 1.0,
@@ -28,7 +28,7 @@ class ElevationConverter:
     }
 
     @staticmethod
-    def get_linear_units(crs: str) -> Optional[str]:
+    def get_linear_units(crs: str) -> str | None:
         """Get linear units of a projected CRS.
 
         For projected CRS, elevation is measured in the same units as the
@@ -56,7 +56,7 @@ class ElevationConverter:
                         return axis.unit_name.lower()
 
             return None
-        except Exception as e:
+        except (ValueError, RuntimeError) as e:
             logger.warning(f"Could not determine linear units for {crs}: {e}")
             return None
 

@@ -3,7 +3,7 @@
 import json
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from .models import AOI, BoundingBox, Tile
 
@@ -18,7 +18,7 @@ class Manifest:
         aoi: AOI,
         tiles: list[Tile],
         buffer: int = 0,
-        cellsize: Optional[float] = None,
+        cellsize: float | None = None,
     ):
         """Create manifest from AOI and tiles.
 
@@ -68,6 +68,10 @@ class Manifest:
                     "dataset_id": tile.dataset_id,
                     "tile_id": tile.tile_id,
                     "priority": tile.priority,
+                    "publication_date": tile.publication_date.isoformat(),
+                    "last_updated": tile.last_updated.isoformat(),
+                    "flight_start": tile.flight_start.isoformat() if tile.flight_start else None,
+                    "flight_end": tile.flight_end.isoformat() if tile.flight_end else None,
                     "url": tile.download_url,
                     "bounds": {
                         "min_x": float(tile.bounds_wgs84.min_x),
@@ -152,8 +156,10 @@ class Manifest:
                 id=f"{tile_data['dataset_id']}_{tile_data['tile_id']}",
                 dataset_id=tile_data["dataset_id"],
                 tile_id=tile_data["tile_id"],
-                publication_date="2021-01-01T00:00:00",  # Dummy date for loaded manifest
-                last_updated="2021-01-01T00:00:00",  # Will be overridden if needed
+                publication_date=tile_data.get("publication_date", "2021-01-01T00:00:00"),
+                last_updated=tile_data.get("last_updated", "2021-01-01T00:00:00"),
+                flight_start=tile_data.get("flight_start"),
+                flight_end=tile_data.get("flight_end"),
                 download_url=tile_data["url"],
                 bounds_wgs84=BoundingBox(
                     min_x=bounds["min_x"],

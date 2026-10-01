@@ -1,10 +1,9 @@
 """Utilities for accessing bundled projection files."""
 
 from pathlib import Path
-from typing import Optional
 
 
-def get_projection_file(filename: str) -> Optional[Path]:
+def get_projection_file(filename: str) -> Path | None:
     """Get path to a bundled projection file.
 
     Parameters
@@ -25,7 +24,7 @@ def get_projection_file(filename: str) -> Optional[Path]:
     return proj_path if proj_path.exists() else None
 
 
-def load_projection_content(filename: str) -> Optional[str]:
+def load_projection_content(filename: str) -> str | None:
     """Load content of a bundled projection file.
 
     Parameters

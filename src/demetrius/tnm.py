@@ -3,7 +3,7 @@
 import logging
 import time
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
@@ -39,7 +39,7 @@ class TNMTileSource(TileSource):
         """
         self.timeout = timeout
         self.client = httpx.Client(timeout=timeout)
-        self._sciencebase_cache: dict[str, Any] = {}  # Cache for sciencebase metadata
+        self._sciencebase_cache: dict[str, tuple[datetime | None, datetime | None]] = {}
 
     def search(self, aoi_bbox: BoundingBox) -> list[Tile]:
         """Search TNM for tiles intersecting bounding box.
@@ -88,7 +88,7 @@ class TNMTileSource(TileSource):
 
             try:
                 data = response.json()
-            except ValueError as e:
+            except (TypeError, ValueError) as e:
                 raise ValueError(f"TNM API returned invalid JSON: {e}") from e
 
             response_total = data.get("total", 0)
@@ -100,8 +100,8 @@ class TNMTileSource(TileSource):
                 logger.debug(f"Total items from TNM API: {total}")
             elif total is None and response_total == 0:
                 logger.debug(
-                    f"TNM API returned total=0 (possibly transient API state); "
-                    f"continuing pagination until empty response"
+                    "TNM API returned total=0 (possibly transient API state); "
+                    "continuing pagination until empty response"
                 )
 
             logger.debug(f"Fetched {len(items)} items (offset={offset}, total={total})")
@@ -232,24 +232,13 @@ class TNMTileSource(TileSource):
         except ValueError as e:
             raise ValueError(f"Failed to parse IDs from '{title}': {e}") from e
 
-        # Parse dates - prefer sciencebase start date over TNM publication date
+        # TNM publication and ScienceBase acquisition dates describe different events.
         try:
             pub_date = self._parse_date(item["publicationDate"])
             last_updated = self._parse_date(item["lastUpdated"])
-
-            # Try to get project start date from sciencebase if available
-            metaUrl = item.get("metaUrl")
-            if metaUrl:
-                start_date = self._fetch_sciencebase_start_date(metaUrl)
-                if start_date:
-                    # Use sciencebase start date as publication_date for more accurate prioritization
-                    logger.debug(
-                        f"Using sciencebase start date {start_date} for {dataset_id} "
-                        f"(TNM publication date was {pub_date})"
-                    )
-                    pub_date = start_date
         except ValueError as e:
             raise ValueError(f"Invalid date format: {e}") from e
+        flight_start, flight_end = self._fetch_sciencebase_flight_dates(item.get("metaUrl"))
 
         # Validate bounding box
         try:
@@ -271,6 +260,8 @@ class TNMTileSource(TileSource):
             tile_id=tile_id,
             publication_date=pub_date,
             last_updated=last_updated,
+            flight_start=flight_start,
+            flight_end=flight_end,
             download_url=url,
             bounds_wgs84=bounds,
             priority=-1,  # Will be assigned during prioritization
@@ -300,30 +291,16 @@ class TNMTileSource(TileSource):
         ValueError
             If the date string cannot be parsed.
         """
-        # Remove timezone info if present (anything after +/-)
-        if "+" in date_str or date_str.count("-") > 2:
-            # Has timezone offset like -06:00
-            date_str = (
-                date_str.split("+")[0].split("-")[0]
-                if "+" in date_str
-                else date_str.rsplit("-", 1)[0]
-            )
+        try:
+            parsed = datetime.fromisoformat(date_str)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Could not parse date: {date_str}") from exc
+        return parsed.replace(tzinfo=None)
 
-        # Try ISO format first (with or without time/milliseconds)
-        for fmt in [
-            "%Y-%m-%dT%H:%M:%S.%f",  # with milliseconds
-            "%Y-%m-%dT%H:%M:%S",  # without milliseconds
-            "%Y-%m-%d",  # date only
-        ]:
-            try:
-                return datetime.strptime(date_str, fmt)
-            except ValueError:
-                continue
-
-        raise ValueError(f"Could not parse date: {date_str}")
-
-    def _fetch_sciencebase_start_date(self, metaUrl: Optional[str]) -> Optional[datetime]:
-        """Fetch project start date from sciencebase metadata.
+    def _fetch_sciencebase_flight_dates(
+        self, metaUrl: str | None
+    ) -> tuple[datetime | None, datetime | None]:
+        """Fetch lidar acquisition start and end dates from ScienceBase metadata.
 
         Parameters
         ----------
@@ -332,11 +309,11 @@ class TNMTileSource(TileSource):
 
         Returns
         -------
-        datetime | None
-            Project start date, or None if not available.
+        tuple[datetime | None, datetime | None]
+            Flight start and end, if present.
         """
         if not metaUrl:
-            return None
+            return None, None
 
         # Check cache first
         if metaUrl in self._sciencebase_cache:
@@ -349,25 +326,32 @@ class TNMTileSource(TileSource):
             response.raise_for_status()
             data = response.json()
 
-            # Extract start date from dates array
-            if "dates" in data and isinstance(data["dates"], list):
-                for date_entry in data["dates"]:
-                    if date_entry.get("type") == "Start" and "dateString" in date_entry:
-                        try:
-                            start_date = self._parse_date(date_entry["dateString"])
-                            self._sciencebase_cache[metaUrl] = start_date
-                            return start_date
-                        except ValueError as e:
-                            logger.debug(f"Failed to parse sciencebase start date: {e}")
-
-            logger.debug(f"No start date found in sciencebase metadata for {metaUrl}")
-            self._sciencebase_cache[metaUrl] = None
-            return None
-
-        except Exception as e:
-            logger.debug(f"Failed to fetch sciencebase metadata from {metaUrl}: {e}")
-            self._sciencebase_cache[metaUrl] = None
-            return None
+            if not isinstance(data, dict):
+                raise TypeError(f"Invalid ScienceBase metadata for {metaUrl}")
+            dates = data.get("dates", [])
+            if not isinstance(dates, list):
+                raise TypeError(f"Invalid ScienceBase dates for {metaUrl}")
+            parsed_dates: dict[str, datetime] = {}
+            for entry in dates:
+                if isinstance(entry, dict) and entry.get("type") in ("Start", "End"):
+                    if not isinstance(entry.get("dateString"), str):
+                        raise ValueError(f"Invalid ScienceBase flight date for {metaUrl}")
+                    parsed_dates[entry["type"]] = self._parse_date(entry["dateString"])
+            flight_start = parsed_dates.get("Start")
+            flight_end = parsed_dates.get("End")
+            if flight_start is not None and flight_end is not None and flight_start > flight_end:
+                raise ValueError(f"ScienceBase flight end precedes start for {metaUrl}")
+            if flight_start is None or flight_end is None:
+                logger.warning("Incomplete ScienceBase lidar flight dates for %s", metaUrl)
+            flight_dates = flight_start, flight_end
+            self._sciencebase_cache[metaUrl] = flight_dates
+            return flight_dates
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "Could not fetch ScienceBase lidar flight dates from %s: %s", metaUrl, exc
+            )
+            self._sciencebase_cache[metaUrl] = (None, None)
+            return None, None
 
     def __del__(self) -> None:
         """Clean up the HTTP client.

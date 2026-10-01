@@ -1,10 +1,9 @@
 """Dataset and tile ID extraction from TNM responses."""
 
 import re
-from typing import Optional
 
 
-def parse_dataset_and_tile_ids(title: str, url: Optional[str] = None) -> tuple[str, str]:
+def parse_dataset_and_tile_ids(title: str, url: str | None = None) -> tuple[str, str]:
     """Extract dataset_id and tile_id from TNM product title.
 
     Expects format: "USGS 1 Meter 18 x38y448 PA_3_County_South_Central_2018_D18"

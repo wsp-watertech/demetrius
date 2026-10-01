@@ -1,7 +1,7 @@
 """AOI inspection and analysis without downloading tiles."""
 
 import logging
-from typing import Sequence
+from collections.abc import Sequence
 
 from .models import AOI, Tile
 
@@ -26,6 +26,19 @@ def format_bytes(num_bytes: float) -> str:
             return f"{num_bytes:.1f} {unit}"
         num_bytes /= 1024
     return f"{num_bytes:.1f} PB"
+
+
+def _dataset_dates(tiles: Sequence[Tile]) -> tuple[str, str]:
+    """Format acquisition and publication ranges without conflating their sources."""
+    starts = [tile.flight_start for tile in tiles if tile.flight_start is not None]
+    ends = [tile.flight_end for tile in tiles if tile.flight_end is not None]
+    flight_range = (
+        f"{min(starts).date() if starts else 'unknown'} → {max(ends).date() if ends else 'unknown'}"
+    )
+    publications = [tile.publication_date for tile in tiles]
+    first, last = min(publications).date(), max(publications).date()
+    publication_range = str(first) if first == last else f"{first} → {last}"
+    return flight_range, publication_range
 
 
 class InspectionReport:
@@ -167,8 +180,10 @@ class InspectionReport:
         lines.extend(
             [
                 "\nArea of Interest:",
-                f"  Bounds: ({bounds.min_x:.4f}, {bounds.min_y:.4f}) → "
-                f"({bounds.max_x:.4f}, {bounds.max_y:.4f})",
+                (
+                    f"  Bounds: ({bounds.min_x:.4f}, {bounds.min_y:.4f}) → "
+                    f"({bounds.max_x:.4f}, {bounds.max_y:.4f})"
+                ),
                 f"  Buffer: {self.aoi.buffer} m",
             ]
         )
@@ -203,15 +218,14 @@ class InspectionReport:
         for i, (dataset_id, ds_tiles) in enumerate(
             sorted(datasets.items(), key=lambda x: min(t.priority for t in x[1]))
         ):
-            pub_dates = [t.publication_date for t in ds_tiles]
-            earliest = min(pub_dates)
-            latest = max(pub_dates)
+            flight_range, publication_range = _dataset_dates(ds_tiles)
 
             lines.extend(
                 [
                     f"    [{i}] {dataset_id}",
                     f"        Tiles: {len(ds_tiles)}",
-                    f"        Publication dates: {earliest.date()} → {latest.date()}",
+                    f"        LiDAR flight dates: {flight_range}",
+                    f"        Publication dates: {publication_range}",
                 ]
             )
 
@@ -313,18 +327,17 @@ class InspectionReport:
         )
 
         for dataset_idx, (dataset_id, ds_tiles) in enumerate(sorted_datasets):
-            pub_dates = [t.publication_date for t in ds_tiles]
-            earliest = min(pub_dates)
-            latest = max(pub_dates)
+            flight_range, publication_range = _dataset_dates(ds_tiles)
             priority = ds_tiles[0].priority
 
             lines.extend(
                 [
                     "",
                     f"Project [{priority}] {dataset_id}",
-                    f"  Publication dates: {earliest.date()} → {latest.date()}",
+                    f"  LiDAR flight dates: {flight_range}",
+                    f"  Publication dates: {publication_range}",
                     f"  Total tiles: {len(ds_tiles)}",
-                    f"  Strategy: {'BASE LAYER (oldest)' if priority == 0 else f'OVERLAY (higher priority, overwrites previous projects)'}",
+                    f"  Strategy: {'BASE LAYER (oldest)' if priority == 0 else 'OVERLAY (higher priority, overwrites previous projects)'}",
                     "",
                 ]
             )

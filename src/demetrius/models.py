@@ -2,9 +2,9 @@
 
 import logging
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from shapely.errors import GEOSException
 from shapely.geometry import Polygon, box
 from shapely.geometry.base import BaseGeometry
 
@@ -114,12 +114,14 @@ class Tile(BaseModel):
     id: str = Field(..., description="Unique tile identifier")
     dataset_id: str = Field(..., description="Dataset identifier extracted from TNM title")
     tile_id: str = Field(..., description="Tile coordinate/ID (e.g., 'x38y448')")
-    publication_date: datetime = Field(..., description="Publication date for priority sorting")
-    last_updated: datetime = Field(..., description="Last update timestamp (priority fallback)")
+    publication_date: datetime = Field(..., description="TNM product publication date")
+    last_updated: datetime = Field(..., description="TNM product last update")
+    flight_start: datetime | None = Field(default=None, description="Lidar acquisition start date")
+    flight_end: datetime | None = Field(default=None, description="Lidar acquisition end date")
     download_url: str = Field(..., description="Direct download URL from TNM")
     bounds_wgs84: BoundingBox = Field(..., description="Bounding box in EPSG:4326")
     priority: int = Field(..., description="Dataset priority (0=newest, 1, 2...)")
-    local_path: Optional[str] = Field(default=None, description="Local file path after download")
+    local_path: str | None = Field(default=None, description="Local file path after download")
 
 
 class AOI(BaseModel):
@@ -142,7 +144,7 @@ class AOI(BaseModel):
         minx, miny, maxx, maxy = self.geometry.bounds
         return BoundingBox(min_x=minx, min_y=miny, max_x=maxx, max_y=maxy)
 
-    def buffered_bounds(self, output_crs: Optional[str] = None) -> BoundingBox:
+    def buffered_bounds(self, output_crs: str | None = None) -> BoundingBox:
         """Get bounding box of buffered AOI.
 
         Buffers in Web Mercator to maintain meter-equivalent distance for TNM
@@ -175,7 +177,7 @@ class AOI(BaseModel):
                 meters_to_crs_units = snapper.get_conversion_factor_for_snapping(output_crs)
                 # Invert the conversion: if 1 meter = X CRS units, then buffer_in_crs_units / X = meters
                 buffer_in_meters = self.buffer / meters_to_crs_units
-            except Exception as e:
+            except (ValueError, RuntimeError, ZeroDivisionError) as e:
                 logger.warning(
                     f"Failed to convert buffer from {output_crs} units to meters: {e}. "
                     "Assuming buffer is already in meters."
@@ -247,7 +249,7 @@ class AOI(BaseModel):
         try:
             gdf_projected = gdf.to_crs(target_crs)
             geom_projected = gdf_projected.iloc[0].geometry
-        except Exception as e:
+        except (ValueError, RuntimeError, GEOSException) as e:
             # If reprojection fails (datum transformation issue), fall back to Web Mercator buffering
             logger.warning(
                 f"Reprojection to {target_crs} failed: {e}. Falling back to Web Mercator buffering."
@@ -263,7 +265,7 @@ class AOI(BaseModel):
                     f"Invalid coordinates after reprojection to {target_crs}. Falling back to Web Mercator buffering."
                 )
                 return self.buffered_geometry()
-        except Exception as e:
+        except (ValueError, GEOSException) as e:
             logger.warning(
                 f"Geometry validation failed after reprojection: {e}. Falling back to Web Mercator buffering."
             )
@@ -276,12 +278,12 @@ class AOI(BaseModel):
         # Buffer in target CRS with lower resolution if needed to avoid errors
         try:
             buffered = geom_projected.buffer(self.buffer)
-        except Exception as e:
+        except (ValueError, GEOSException) as e:
             # Try with lower resolution if default fails
             logger.warning(f"Buffer with default resolution failed: {e}, trying with resolution=8")
             try:
                 buffered = geom_projected.buffer(self.buffer, resolution=8)
-            except Exception as e2:
+            except (ValueError, GEOSException) as e2:
                 # If buffering still fails, fall back to Web Mercator buffering
                 logger.warning(
                     f"Buffering with lower resolution also failed: {e2}. Falling back to Web Mercator buffering."
@@ -292,7 +294,7 @@ class AOI(BaseModel):
         if not buffered.is_valid:
             try:
                 buffered = buffered.buffer(0)
-            except Exception as e:
+            except (ValueError, GEOSException) as e:
                 logger.warning(
                     f"Could not fix invalid buffered geometry: {e}. Falling back to Web Mercator buffering."
                 )
@@ -325,8 +327,10 @@ class AOI(BaseModel):
         ValueError
             If the file contains no geometries.
         """
-        import geopandas as gpd
+        from math import isfinite
         from pathlib import Path
+
+        import geopandas as gpd
 
         path_obj = Path(path)
 
@@ -339,12 +343,25 @@ class AOI(BaseModel):
         if gdf.empty:
             raise ValueError(f"No geometries found in {path}")
 
+        if gdf.crs is None:
+            raise ValueError(f"AOI in {path} has no CRS; assign one before processing")
+
         # Convert to WGS84 if not already
-        if gdf.crs and gdf.crs.to_epsg() != 4326:
+        if gdf.crs.to_epsg() != 4326:
             gdf = gdf.to_crs("EPSG:4326")
 
+        if (
+            gdf.geometry.isna().any()
+            or gdf.geometry.is_empty.any()
+            or not all(isfinite(value) for value in gdf.total_bounds)
+        ):
+            raise ValueError(
+                f"AOI in {path} has empty or non-finite coordinates after conversion to "
+                "EPSG:4326; verify its CRS and installed PROJ datum grids (proj-data)"
+            )
+
         if len(gdf) > 1:
-            geometry = gdf.unary_union
+            geometry = gdf.geometry.union_all()
         else:
             geometry = gdf.iloc[0].geometry
 

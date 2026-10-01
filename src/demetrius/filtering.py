@@ -1,7 +1,7 @@
 """Tile filtering and selection logic."""
 
 import logging
-from typing import Optional, Sequence
+from collections.abc import Sequence
 
 from shapely.geometry import Polygon
 
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 def filter_tiles_by_aoi(
     tiles: Sequence[Tile],
     aoi: AOI,
-    project_bounds: Optional[ProjectBoundaries] = None,
+    project_bounds: ProjectBoundaries | None = None,
 ) -> list[Tile]:
     """Filter tiles to only those intersecting the buffered AOI.
 
@@ -52,10 +52,9 @@ def filter_tiles_by_aoi(
 
         # If project boundaries provided, check for actual coverage
         # Don't buffer the project boundaries - they represent actual data footprints
-        if project_bounds is not None:
-            if not project_bounds.intersects_coverage(tile_polygon):
-                logger.debug(f"Discarded tile {tile.tile_id} (no project coverage in tile area)")
-                continue
+        if project_bounds is not None and not project_bounds.intersects_coverage(tile_polygon):
+            logger.debug(f"Discarded tile {tile.tile_id} (no project coverage in tile area)")
+            continue
 
         logger.debug(f"Kept tile {tile.tile_id} (intersects buffered AOI)")
         filtered.append(tile)

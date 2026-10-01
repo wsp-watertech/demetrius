@@ -3,7 +3,7 @@
 High-resolution DEM assembly from USGS 3DEP data for engineering applications.
 
 ```bash
-demetrius process --aoi watershed.shp --project-bounds boundaries.gpkg --output dem.tif 
+demetrius process --aoi watershed.shp --output dem.tif
 ```
 
 **demetrius** is a Python library and CLI tool that:
@@ -15,31 +15,91 @@ demetrius process --aoi watershed.shp --project-bounds boundaries.gpkg --output 
 
 Perfect for hydraulic modeling workflows where data integrity and reproducibility are critical.
 
+For overlapping datasets, the newer **LiDAR acquisition period** (ScienceBase
+flight Start/End dates) takes precedence over an older one. Datasets without
+complete flight dates are placed below dated datasets; their publication date
+does not stand in for the acquisition date. `inspect` reports both the LiDAR
+flight range and the TNM product publication date separately.
+
 ## Installation
 
-```bash
-pip install demetrius
-```
-
-Or install from source for development:
+**Conda (recommended for GDAL and local datum grids):** from a checkout of
+this repository, create the environment specified in `environment.yml`. It
+installs Python, GDAL, pyproj, `proj-data`, and the Python dependencies from
+conda-forge, then installs demetrius into that environment.
 
 ```bash
 git clone https://github.com/wsp-watertech/demetrius.git
 cd demetrius
-pip install -e ".[dev]"
+conda env create -f environment.yml
+conda activate demetrius
+export PROJ_DATA="$CONDA_PREFIX/share/proj"
 ```
 
-**Installation with Conda (recommended):**
+Set `PROJ_DATA` **after activation**, so it points to this environment rather
+than another installation. To persist it for future activations instead of
+exporting it in every shell:
+
 ```bash
-conda create -n demetrius python=3.12 gdal
+conda env config vars set -n demetrius PROJ_DATA="$CONDA_PREFIX/share/proj"
+conda deactivate
 conda activate demetrius
-pip install demetrius
 ```
+
+For an existing Conda environment created without `environment.yml`, install
+the missing native dependencies from conda-forge before installing demetrius:
+
+```bash
+conda activate demetrius
+conda install -c conda-forge gdal pyproj proj-data
+export PROJ_DATA="$CONDA_PREFIX/share/proj"
+pip install -e .
+```
+
+`pip install demetrius` or `pip install -e ".[dev]"` alone does not install
+the GDAL command-line tools or the local PROJ datum grids. If you use pip
+without Conda, provide compatible GDAL/PROJ system packages and datum grids.
 
 ### System Requirements
 
 - **Python**: 3.12 or higher
 - **GDAL**: Command-line tools (`gdalbuildvrt`, `gdalwarp`, `gdal_translate`)
+- **PROJ datum grids**: `proj-data` for local NAD83 transformations; see below.
+
+### Container and task execution
+
+The Docker image includes the Conda environment, GDAL command-line tools, and
+local PROJ datum grids. Build it locally, then pass a CLI subcommand and its
+arguments after the image name:
+
+```bash
+docker build -t demetrius .
+mkdir -p output
+docker run --rm --user "$(id -u):$(id -g)" \
+  --mount "type=bind,src=$(pwd)/site.geojson,dst=/input/site.geojson,readonly" \
+  --mount "type=bind,src=$(pwd)/output,dst=/work" \
+  demetrius process --aoi /input/site.geojson --output /work/dem.tif
+```
+
+For GitHub releases tagged `v*.*.*`, the release workflow also publishes an
+image such as `ghcr.io/wsp-watertech/demetrius:v0.1.0b1`. Use that same
+`process ...` argument list as the container command for AWS Batch, ECS
+Fargate, or another container task runner. GHCR packages can be private by
+default; configure registry credentials for the task or make the package
+public before deploying it. The default user is UID 10001;
+ensure any output mount is writable by that UID. `/work` is the working
+directory; downloads and temporary GDAL files use `/tmp` by default. Size
+the task's ephemeral storage for both the downloaded tiles and intermediate
+rasters; Fargate's default storage may be too small for large DEMs. Mount
+durable storage such as EFS for the AOI and output, or explicitly stage inputs
+and upload outputs with a separate task: the CLI does not read or write S3
+URLs directly. Output and manifest files left only on ephemeral storage are
+lost when the task exits. Set `TMPDIR`, `CPL_TMPDIR`, or `DEMETRIUS_DATA_DIR`
+to writable paths if using separate scratch storage.
+
+The image sets `PROJ_DATA` to the bundled Conda grids and disables remote PROJ
+grid downloads. If additional grids must be fetched, opt in with
+`PROJ_NETWORK=ON` and configure the CA bundle as described below.
 
 ## Configuration
 
@@ -52,16 +112,18 @@ By default, demetrius and GDAL store temporary files in the system temp director
 ```bash
 # Use a custom temp directory
 export TMPDIR=/fast/ssd/temp
-demetrius process --aoi site.shp --output dem.tif --project-bounds boundaries.gpkg
+demetrius process --aoi site.shp --output dem.tif
 ```
 
 **Or in Python:**
 
 ```python
 import os
+
 os.environ["TMPDIR"] = "/fast/ssd/temp"
 
 from demetrius.pipeline import run_pipeline
+
 result = run_pipeline(...)
 ```
 
@@ -72,7 +134,7 @@ For very large operations, also set `CPL_TMPDIR` to ensure GDAL uses the same te
 ```bash
 export TMPDIR=/scratch/tmp
 export CPL_TMPDIR=/scratch/tmp
-demetrius process --aoi site.shp --output dem.tif --project-bounds boundaries.gpkg
+demetrius process --aoi site.shp --output dem.tif
 ```
 
 **Note:** GDAL performs disk space checks before large operations. If you get a "Free disk space available is X GB, whereas Y GB are at least necessary" error despite having adequate space on your temp filesystem, this is likely GDAL's conservative estimate. The check is automatically disabled in demetrius to prevent false failures on properly configured systems.
@@ -80,6 +142,45 @@ demetrius process --aoi site.shp --output dem.tif --project-bounds boundaries.gp
 **Important:** Python's `tempfile` module silently falls back to the system default temp directory (e.g. `/tmp`) if `TMPDIR` points to a directory that doesn't exist yet or isn't writable — it does **not** raise an error. This is easy to miss, especially when running under `nohup` or other non-interactive contexts. demetrius validates `TMPDIR` at pipeline startup and will auto-create it if missing, or fail loudly with a clear error if it cannot be created/written to, rather than silently writing to `/tmp` (which can exhaust disk space on large jobs).
 
 **Performance tip:** For large mosaics or batch processing, using a fast local SSD for temp storage can significantly speed up processing times.
+
+### PROJ datum grids and corporate proxies
+
+Some AOIs require NAD83 grids to reproject to WGS84. The Conda installation
+above supplies these grids locally. Confirm pyproj uses that installation:
+
+```bash
+python - <<'PY'
+import demetrius
+from pyproj import Transformer, datadir
+
+print(datadir.get_data_dir())  # Should match $CONDA_PREFIX/share/proj
+print(Transformer.from_crs(4269, 4326, always_xy=True).transform(-84, 37.5, errcheck=True))
+PY
+```
+
+The transformation should return finite coordinates near `(-84, 37.5)`. If
+you see `no database context specified`, check that `PROJ_DATA` points to a
+directory containing `proj.db`, and avoid mixing pip-installed pyproj with
+Conda's PROJ installation. If coordinates become infinite or a remote grid
+request fails, confirm `proj-data` is installed in the active environment
+(`conda list proj-data`); a CA bundle alone does not install datum grids.
+
+Only if PROJ must download *other* grids through a TLS-intercepting proxy,
+configure a PEM bundle containing both corporate and public CA roots:
+
+```bash
+export PROJ_NETWORK=ON
+export PROJ_CURL_CA_BUNDLE=/path/to/ca-bundle.pem
+export SSL_CERT_FILE=/path/to/ca-bundle.pem
+export REQUESTS_CA_BUNDLE=/path/to/ca-bundle.pem
+```
+
+`PROJ_CURL_CA_BUNDLE` applies to PROJ grid downloads; `SSL_CERT_FILE` and
+`REQUESTS_CA_BUNDLE` apply to Python HTTPS clients that contact TNM and
+ScienceBase. Set these before running demetrius. Demetrius explicitly selects
+`PROJ_DATA` for pyproj at startup because pyproj can otherwise prefer a
+bundled database over the environment variable. Do not disable TLS
+verification to work around certificate errors.
 
 ### Downloaded Tile Storage
 
@@ -103,11 +204,9 @@ demetrius process --aoi site.shp --output dem.tif --project-bounds boundaries.gp
 
 ```python
 from demetrius.pipeline import run_pipeline
+
 result = run_pipeline(
-    aoi,
-    output_path,
-    project_bounds=boundaries,
-    data_dir="/scratch/demetrius_tiles"
+    aoi, output_path, project_bounds=boundaries, data_dir="/scratch/demetrius_tiles"
 )
 ```
 
@@ -135,15 +234,20 @@ demetrius process --aoi site.shp --output dem.tif --project-bounds boundaries.gp
 
 Required arguments:
 - `--aoi`: Path to AOI geometry (shapefile, GeoJSON, or GeoPackage)
-- `--output`: Output raster path
-- `--project-bounds`: Path to project boundaries (shapefile, GeoPackage, etc.)
+
+By default, demetrius queries the USGS 3DEP Elevation Index's 1-meter project
+footprint layer for projects intersecting the AOI. Pass `--project-bounds
+boundaries.gpkg` to use a local file instead (and skip that query). A failed
+query or an AOI with no project footprints fails explicitly rather than
+assuming tile bounding boxes represent actual coverage. For batch processing,
+the default lookup runs separately for each AOI.
 
 ### Preview Tiles (No Download)
 
 Inspect what tiles would be used without downloading:
 
 ```bash
-demetrius inspect --aoi site.shp --project-bounds boundaries.gpkg
+demetrius inspect --aoi site.shp
 ```
 
 Output:
@@ -160,10 +264,11 @@ Tiles Discovered:
   Total: 3 tile(s)
   Datasets: 1
   
-  Dataset Priority Order (newest first):
+  Dataset Priority Order (oldest first; newer flights overlay older):
     [0] PA_3_County_South_Central_2018_D18
         Tiles: 3
-        Publication dates: 2018-06-15 → 2018-06-15
+        LiDAR flight dates: 2018-03-01 → 2018-06-15
+        Publication dates: 2020-06-15
 
 Coverage Estimate:
   AOI area: 0.00 sq degrees
@@ -322,7 +427,6 @@ demetrius batch \
   --input study_areas.gpkg \
   --name-field name \
   --output-dir ./output_dems \
-  --project-bounds boundaries.gpkg \
   --output-crs EPSG:32111 \
   --buffer 500 \
   --cellsize 1.0
@@ -331,7 +435,7 @@ demetrius batch \
 Or with the FFRD projection defaults applied to every AOI:
 
 ```bash
-demetrius batch --input study_areas.gpkg --name-field name --ffrd --project-bounds boundaries.gpkg
+demetrius batch --input study_areas.gpkg --name-field name --ffrd
 ```
 
 Each DEM gets its own output (`{output-dir}/{name}.tif`) and manifest
@@ -348,7 +452,6 @@ results = batch_process(
     "study_areas.gpkg",
     name_field="name",
     output_dir="./output_dems",
-    project_bounds="boundaries.gpkg",
     output_crs="EPSG:32111",
     buffer=500,
     cellsize=1.0,
@@ -370,8 +473,9 @@ for result in results:
 --ffrd                          Use FFRD custom projection (overrides --output-crs, enforces snapping, defaults to cellsize=4)
 --buffer METERS                 Buffer for tile discovery and clipping [default: 0]
 --cellsize FLOAT                Output cellsize in target CRS units [default: 1m converted to CRS units]
+--project-bounds PATH           Override USGS 1-meter project footprints with a local boundary file
 --no-snap                       Disable grid snapping [default: enabled]
---require-full-coverage         Fail if AOI not fully covered [default: True]
+--require-full-coverage         Fail if AOI not fully covered [default: False]
 --mode {full,download-only,process-only}
                                 Processing mode [default: full]
 ```
@@ -483,9 +587,15 @@ https://tnmaccess.nationalmap.gov/api/v1/products
 
 **Filtering**: Tiles are filtered to those intersecting the buffered AOI.
 
-**Prioritization**: Datasets are ranked by `publication_date` (newest first). When the same tile appears in multiple datasets, only the newest version is kept.
+**Prioritization**: Datasets are ranked by the latest LiDAR flight end date,
+then start date (oldest first; newer flights overwrite older data where valid).
+Datasets without a complete flight range form the base layer. Overlapping
+datasets are retained so newer projects can fill or overlay older ones.
 
-**Coverage Validation**: Original (unbuffered) AOI must be fully covered. Fails with `--require-full-coverage=true`.
+**Coverage Validation**: Project footprints are used to check coverage of the
+original (unbuffered) AOI. Gaps warn by default; `--require-full-coverage`
+turns them into an error. Footprints indicate project extents, not guaranteed
+valid raster pixels.
 
 ### 4. Parallel Download
 

@@ -1,20 +1,29 @@
-"""Project boundary coverage from FESM or similar sources."""
+"""Project boundary coverage from USGS or local footprint files."""
 
 import logging
+import time
 from pathlib import Path
 
 import geopandas as gpd
+import httpx
+from shapely.errors import GEOSException
 from shapely.geometry.base import BaseGeometry
 
+from .models import BoundingBox
+
 logger = logging.getLogger(__name__)
+
+USGS_PROJECTS_URL = (
+    "https://index.nationalmap.gov/arcgis/rest/services/3DEPElevationIndex/MapServer/18/query"
+)
+USGS_PAGE_SIZE = 1000
 
 
 class ProjectBoundaries:
     """Load and query actual DEM coverage from project footprints.
 
-    The project boundaries file (typically FESM data) contains the true coverage
-    areas of DEM projects, which may not align with TNM tile boundaries. This
-    allows us to detect gaps and validate coverage more accurately.
+    Project footprints may not align with TNM tile boundaries. They provide
+    more precise project extent checks than the tile bounding boxes alone.
     """
 
     def __init__(self, gdf: gpd.GeoDataFrame):
@@ -78,14 +87,14 @@ class ProjectBoundaries:
                     )
                 else:
                     gdf = gdf_converted
-            except Exception as e:
+            except (ValueError, RuntimeError, GEOSException) as e:
                 logger.warning(
                     f"CRS conversion failed: {e}. Keeping geometries in original CRS ({gdf.crs})."
                 )
 
         self.gdf = gdf.reset_index(drop=True)
         self.spatial_index = self.gdf.sindex
-        self._buffered_cache: dict[float, "BaseGeometry"] = {}  # Cache for buffered boundaries
+        self._buffered_cache: dict[float, BaseGeometry] = {}  # Cache for buffered boundaries
         logger.info(f"Loaded {len(self.gdf)} project boundaries")
 
     @classmethod
@@ -129,10 +138,78 @@ class ProjectBoundaries:
                     gdf = gpd.read_parquet(path)
                 else:
                     gdf = gpd.read_file(path)
-        except Exception as e:
-            raise ValueError(f"Failed to read project boundaries: {e}")
+        except (OSError, ValueError, RuntimeError) as e:
+            raise ValueError(f"Failed to read project boundaries: {e}") from e
 
         return cls(gdf)
+
+    @classmethod
+    def from_usgs(cls, bbox: BoundingBox) -> "ProjectBoundaries":
+        """Query 1-meter DEM project footprints intersecting a WGS84 bounding box."""
+        features = []
+        offset = 0
+        params = {
+            "where": "1=1",
+            "geometry": ",".join(str(value) for value in bbox.as_tuple()),
+            "geometryType": "esriGeometryEnvelope",
+            "inSR": 4326,
+            "outSR": 4326,
+            "spatialRel": "esriSpatialRelIntersects",
+            "outFields": "project,project_id",
+            "returnGeometry": "true",
+            "orderByFields": "OBJECTID ASC",
+            "resultRecordCount": USGS_PAGE_SIZE,
+            "f": "geojson",
+        }
+
+        with httpx.Client(timeout=30.0) as client:
+            while True:
+                params["resultOffset"] = offset
+                for attempt in range(3):
+                    try:
+                        response = client.get(USGS_PROJECTS_URL, params=params)
+                        response.raise_for_status()
+                        break
+                    except (httpx.RequestError, httpx.HTTPStatusError) as exc:
+                        if (
+                            isinstance(exc, httpx.HTTPStatusError)
+                            and exc.response.status_code < 500
+                        ) or attempt == 2:
+                            raise ValueError(f"USGS project footprint query failed: {exc}") from exc
+                        logger.warning("USGS project footprint query failed, retrying: %s", exc)
+                        time.sleep(2**attempt)
+
+                try:
+                    payload = response.json()
+                except ValueError as exc:
+                    raise ValueError("USGS project footprint query returned invalid JSON") from exc
+                page = payload.get("features") if isinstance(payload, dict) else None
+                if (
+                    not isinstance(payload, dict)
+                    or payload.get("type") != "FeatureCollection"
+                    or not isinstance(page, list)
+                    or any(
+                        not isinstance(feature, dict) or not feature.get("geometry")
+                        for feature in page
+                    )
+                ):
+                    raise ValueError(
+                        "USGS project footprint query returned invalid GeoJSON features"
+                    )
+                features.extend(page)
+                if not page:
+                    if payload.get("exceededTransferLimit"):
+                        raise ValueError(
+                            "USGS project footprint query returned an empty truncated page"
+                        )
+                    break
+                offset += len(page)
+                if len(page) < USGS_PAGE_SIZE and not payload.get("exceededTransferLimit"):
+                    break
+
+        if not features:
+            raise ValueError("No USGS 1-meter DEM project footprints intersect the AOI")
+        return cls(gpd.GeoDataFrame.from_features(features, crs="EPSG:4326"))
 
     def get_coverage_for_geometry(self, geometry: BaseGeometry) -> BaseGeometry:
         """Get union of all project boundaries that intersect a geometry.
@@ -151,13 +228,14 @@ class ProjectBoundaries:
         # Use spatial index for efficiency
         candidates = self.spatial_index.intersection(geometry.bounds)
         intersecting = self.gdf.iloc[list(candidates)]
+        intersecting = intersecting[intersecting.geometry.intersects(geometry)]
 
         if intersecting.empty:
             from shapely.geometry import GeometryCollection
 
             return GeometryCollection()
 
-        return intersecting.geometry.unary_union
+        return intersecting.geometry.union_all()
 
     def coverage_fraction(self, geometry: BaseGeometry) -> float:
         """Calculate fraction of geometry covered by project boundaries.
@@ -276,8 +354,6 @@ class ProjectBoundaries:
             buffered_coverage = self._buffered_cache[buffer_meters]
             return geometry.intersects(buffered_coverage)
 
-        import geopandas as gpd
-
         # Compute and cache the buffered boundaries (only done once per buffer distance)
         gdf_mercator = self.gdf.to_crs("EPSG:3857")
         gdf_mercator_buffered = gdf_mercator.copy()
@@ -285,7 +361,7 @@ class ProjectBoundaries:
         gdf_buffered = gdf_mercator_buffered.to_crs("EPSG:4326")
 
         # Compute union once and cache it
-        buffered_coverage = gdf_buffered.geometry.unary_union
+        buffered_coverage = gdf_buffered.geometry.union_all()
         self._buffered_cache[buffer_meters] = buffered_coverage
 
         return geometry.intersects(buffered_coverage)

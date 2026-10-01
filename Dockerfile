@@ -1,18 +1,22 @@
-FROM mambaorg/micromamba:latest
+FROM condaforge/miniforge3:25.3.0-3
 
 WORKDIR /app
 
-# Copy environment file
-COPY environment.yml .
+COPY environment.yml pyproject.toml README.md LICENSE ./
+COPY src/ ./src/
 
-# Create mamba environment
-RUN micromamba install -y -n base -f environment.yml && \
-    micromamba clean --all --yes
+RUN conda env create -f environment.yml && conda clean --all --yes && \
+    mkdir -p /work && chown 10001:0 /work
 
-# Copy project
-COPY . .
+ENV PATH="/opt/conda/envs/demetrius/bin:${PATH}" \
+    PROJ_DATA=/opt/conda/envs/demetrius/share/proj \
+    PROJ_NETWORK=OFF \
+    PYTHONUNBUFFERED=1 \
+    DEMETRIUS_DATA_DIR=/tmp/demetrius_tiles \
+    TMPDIR=/tmp \
+    CPL_TMPDIR=/tmp
 
-# Install package in development mode
-RUN pip install -e .
+USER 10001:0
+WORKDIR /work
 
 ENTRYPOINT ["demetrius"]

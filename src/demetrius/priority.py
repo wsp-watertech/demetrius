@@ -2,8 +2,7 @@
 
 import logging
 from collections import defaultdict
-from datetime import datetime
-from typing import Sequence
+from collections.abc import Sequence
 
 from .models import Tile
 
@@ -14,8 +13,9 @@ def prioritize_datasets(tiles: Sequence[Tile]) -> list[Tile]:
     """Assign priority values to tiles and datasets.
 
     Datasets are prioritized by:
-    1. publication_date (ascending - oldest first for base layer)
-    2. last_updated (fallback)
+    1. Lidar flight end (ascending - oldest first for base layer)
+    2. Lidar flight start (tie breaker)
+    Datasets without a complete flight range are ranked below dated datasets.
 
     Matching tiles from different datasets are NOT deduplicated here.
     Instead, all tiles are kept and allowed to overlap. The mosaic step
@@ -61,7 +61,7 @@ def prioritize_datasets(tiles: Sequence[Tile]) -> list[Tile]:
 
 
 def _sort_datasets_by_priority(dataset_ids: list[str], all_tiles: Sequence[Tile]) -> list[str]:
-    """Sort dataset IDs by recency (newest first).
+    """Sort dataset IDs by acquisition recency (oldest first).
 
     Parameters
     ----------
@@ -75,27 +75,35 @@ def _sort_datasets_by_priority(dataset_ids: list[str], all_tiles: Sequence[Tile]
     list[str]
         Sorted dataset identifiers in priority order.
     """
-    dataset_metadata: dict[str, tuple[datetime, datetime]] = {}
+    dataset_metadata: dict[str, tuple[bool, int, int, str]] = {}
 
     for dataset_id in dataset_ids:
         dataset_tiles = [t for t in all_tiles if t.dataset_id == dataset_id]
         if not dataset_tiles:
             continue
 
-        # Get newest publication date and last_updated in this dataset
-        pub_dates = [t.publication_date for t in dataset_tiles]
-        update_dates = [t.last_updated for t in dataset_tiles]
+        complete = [
+            (t.flight_start, t.flight_end)
+            for t in dataset_tiles
+            if t.flight_start is not None and t.flight_end is not None
+        ]
+        if len(complete) != len(dataset_tiles):
+            logger.warning(
+                "Incomplete lidar flight date range for %d tile(s) in dataset %s",
+                len(dataset_tiles) - len(complete),
+                dataset_id,
+            )
+        if complete:
+            end = max(flight_end.date().toordinal() for _, flight_end in complete)
+            start = max(flight_start.date().toordinal() for flight_start, _ in complete)
+        else:
+            end = start = 0
+        dataset_metadata[dataset_id] = (bool(complete), end, start, dataset_id)
 
-        latest_pub = max(pub_dates)
-        latest_update = max(update_dates)
-
-        dataset_metadata[dataset_id] = (latest_pub, latest_update)
-
-    # Sort by publication_date asc, then last_updated asc (oldest first)
-    # This ensures oldest data becomes priority=0 (base) and newest gets highest priority (overlay on top)
+    # Undated projects form the base; a later flight always overlays an earlier flight.
     sorted_ids = sorted(
         dataset_metadata.keys(),
-        key=lambda d: (dataset_metadata[d][0], dataset_metadata[d][1]),
+        key=lambda d: dataset_metadata[d],
     )
 
     return sorted_ids

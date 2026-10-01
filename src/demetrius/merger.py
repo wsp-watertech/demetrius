@@ -13,8 +13,9 @@ import os
 import subprocess
 import tempfile
 from collections import defaultdict
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Any
 
 from shapely.geometry import mapping
 from shapely.geometry.base import BaseGeometry
@@ -50,10 +51,10 @@ class DatasetMerger:
         tiles: Sequence[Tile],
         output_path: Path,
         target_crs: str,
-        dataset_vrts: Optional[dict[str, Path]] = None,
+        dataset_vrts: dict[str, Path] | None = None,
         resampling: str = "bilinear",
-        cellsize: Optional[float] = None,
-        cutline_geometry: Optional[BaseGeometry] = None,
+        cellsize: float | None = None,
+        cutline_geometry: BaseGeometry | None = None,
         snap_to_grid: bool = True,
     ) -> Path:
         """Merge datasets by priority, reproject, optionally clip and snap to grid in one pass.
@@ -121,7 +122,7 @@ class DatasetMerger:
         log_msg += " in a single gdalwarp pass"
         logger.info(log_msg)
 
-        cutline_path: Optional[Path] = None
+        cutline_path: Path | None = None
         try:
             if cutline_geometry is not None:
                 cutline_path = self._write_cutline_geojson(cutline_geometry)
@@ -145,7 +146,7 @@ class DatasetMerger:
     def _get_priority_ordered_rasters(
         self,
         tiles: Sequence[Tile],
-        dataset_vrts: Optional[dict[str, Path]] = None,
+        dataset_vrts: dict[str, Path] | None = None,
     ) -> list[Path]:
         """Resolve dataset rasters/VRTs in priority order (oldest to newest).
 
@@ -202,7 +203,7 @@ class DatasetMerger:
 
             # Find all CRSs for this dataset
             dataset_crss = sorted(
-                [crs for (ds_id, crs) in dataset_crs_groups.keys() if ds_id == dataset_id]
+                [crs for (ds_id, crs) in dataset_crs_groups if ds_id == dataset_id]
             )
 
             for crs in dataset_crss:
@@ -235,7 +236,7 @@ class DatasetMerger:
         return dataset_rasters
 
     def _prepare_dataset(
-        self, dataset_id: str, tiles: Sequence[Tile], crs: Optional[str] = None
+        self, dataset_id: str, tiles: Sequence[Tile], crs: str | None = None
     ) -> Path:
         """Prepare dataset for merging (VRT of all tiles or single tile).
 
@@ -318,8 +319,8 @@ class DatasetMerger:
         output_raster: Path,
         target_crs: str,
         resampling: str,
-        cellsize: Optional[float],
-        cutline_path: Optional[Path],
+        cellsize: float | None,
+        cutline_path: Path | None,
         snap_to_grid: bool = True,
     ) -> Path:
         """Run a single gdalwarp call that merges (priority overwrite),

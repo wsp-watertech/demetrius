@@ -502,10 +502,21 @@ def test_mixed_pipeline_and_offline_replay_with_different_projection_and_resolut
     result_values = dataset.ReadAsArray()
     assert np.any(np.isclose(result_values, 30.48006096))
     assert np.any(result_values == 10)
+    assert result.projects_path == tmp_path / "dem.projects.tif"
+    projects = gdal.Open(str(result.projects_path))
+    project_values = projects.ReadAsArray()
+    assert np.all(project_values[result_values == 10] == 0)
+    assert np.all(project_values[np.isclose(result_values, 30.48006096)] == 1)
+    assert projects.GetGeoTransform() == dataset.GetGeoTransform()
+    assert projects.GetProjection() == dataset.GetProjection()
+    projects = None
     original = result_values.copy()
     dataset = None
     saved = Manifest.load(result.manifest_path)
     assert saved.tiles[1].local_path == opr_tile.local_path
+    mapping = saved.to_dict()["projects"]
+    assert [c["value"] for c in mapping] == [0, 1]
+    assert mapping[1]["name"] == opr_tile.workunit
     with (
         patch("src.demetrius.tnm.TNMTileSource", side_effect=AssertionError("network")),
         patch.object(opr, "OPRTileSource", side_effect=AssertionError("network")),
@@ -513,6 +524,9 @@ def test_mixed_pipeline_and_offline_replay_with_different_projection_and_resolut
         replay = run_pipeline(aoi, output, mode="process-only")
     assert replay.status == "success", replay.error
     np.testing.assert_array_equal(gdal.Open(str(output)).ReadAsArray(), original)
+    np.testing.assert_array_equal(
+        gdal.Open(str(replay.projects_path)).ReadAsArray(), project_values
+    )
 
 
 def test_opr_only_coverage_is_not_filtered_by_1m_footprints(tmp_path):

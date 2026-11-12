@@ -92,6 +92,8 @@ class PipelineResult:
         Number of unique datasets used.
     error : str | None
         Error message, if the run failed.
+    projects_path : Path | None
+        Path to the companion project-priority raster, if produced.
     """
 
     name: str
@@ -101,6 +103,7 @@ class PipelineResult:
     tile_count: int = 0
     dataset_count: int = 0
     error: str | None = None
+    projects_path: Path | None = None
 
 
 def run_pipeline(
@@ -115,6 +118,7 @@ def run_pipeline(
     no_snap: bool = False,
     no_clip: bool = False,
     no_overviews: bool = False,
+    no_provenance: bool = False,
     project_bounds: ProjectBoundaries | str | Path | None = None,
     opr_projects: Sequence[int] = (),
     require_full_coverage: bool = False,
@@ -155,6 +159,8 @@ def run_pipeline(
         downsampled reads of the full raster during generation. Useful to
         disable for outputs primarily consumed by tools reading at full
         resolution (e.g. hydrologic models).
+    no_provenance : bool, default=False
+        Skip the companion project-priority raster.
     project_bounds : ProjectBoundaries | str | Path | None
         Project boundaries instance or file path. If omitted, fetch 1-meter DEM
         project footprints from the USGS Elevation Index.
@@ -229,6 +235,7 @@ def run_pipeline(
                 no_snap = manifest.no_snap
                 no_clip = manifest.no_clip
                 no_overviews = manifest.no_overviews
+                no_provenance = manifest.no_provenance
                 ffrd = False
 
         # Handle --ffrd behavior
@@ -369,6 +376,7 @@ def run_pipeline(
                 no_snap=no_snap,
                 no_clip=no_clip,
                 no_overviews=no_overviews,
+                no_provenance=no_provenance,
             )
             manifest.save(manifest_path)
             _report(f"Saved manifest to {manifest_path}")
@@ -473,6 +481,7 @@ def run_pipeline(
                 cellsize=effective_cellsize,
                 cutline_geometry=cutline_geometry_wgs84,
                 snap_to_grid=not no_snap,
+                track_projects=not no_provenance,
             )
 
             if not no_clip:
@@ -487,12 +496,31 @@ def run_pipeline(
 
             elevation_converter = ElevationConverter()
             output_path.parent.mkdir(parents=True, exist_ok=True)
+            dem_source = clipped
+            if not no_provenance:
+                from .provenance import elevation_band
+
+                dem_source = elevation_band(clipped, Path(tmpdir) / "elevation.vrt")
             elevation_converter.convert_and_generate_cog(
-                clipped,
+                dem_source,
                 output_path,
                 target_crs=output_crs,
                 generate_overviews=not no_overviews,
             )
+            projects_path = None
+            if not no_provenance:
+                from .provenance import project_categories, write_projects
+
+                _report("Writing project-priority raster...")
+                projects_path = output_path.with_name(f"{output_path.stem}.projects.tif")
+                write_projects(
+                    clipped,
+                    output_path,
+                    projects_path,
+                    project_categories(prioritized_tiles),
+                    overviews=not no_overviews,
+                )
+                _report(f"Project raster saved to: {projects_path}")
 
         _report(f"SUCCESS! DEM saved to: {output_path}")
 
@@ -503,6 +531,7 @@ def run_pipeline(
             manifest_path=manifest_path if mode != "process-only" else None,
             tile_count=len(prioritized_tiles),
             dataset_count=dataset_count,
+            projects_path=projects_path,
         )
 
     except Exception as e:

@@ -57,6 +57,7 @@ class DatasetMerger:
         cellsize: float | None = None,
         cutline_geometry: BaseGeometry | None = None,
         snap_to_grid: bool = True,
+        track_projects: bool = False,
     ) -> Path:
         """Merge datasets by priority, reproject, optionally clip and snap to grid in one pass.
 
@@ -88,6 +89,8 @@ class DatasetMerger:
             If True, use gdalwarp's -tap (target aligned pixels) flag to align
             output pixels to the grid, eliminating the need for a separate
             snapping step. If False, output pixels may not align to the grid.
+        track_projects : bool, default=False
+            Carry dataset priorities as a second band through the same warp.
 
         Returns
         -------
@@ -110,7 +113,16 @@ class DatasetMerger:
         if cellsize is not None and cellsize <= 0:
             raise ValueError(f"Cellsize must be positive, got {cellsize}")
 
-        dataset_rasters = self._get_priority_ordered_rasters(tiles, dataset_vrts)
+        track_vertical = False
+        if track_projects:
+            import pyproj
+
+            target = pyproj.CRS(target_crs)
+            track_vertical = target.is_compound or target.is_vertical
+
+        dataset_rasters = self._get_priority_ordered_rasters(
+            tiles, dataset_vrts, track_projects=track_projects, track_vertical=track_vertical
+        )
 
         log_msg = (
             f"Merging {len(dataset_rasters)} dataset(s) and reprojecting to "
@@ -136,6 +148,7 @@ class DatasetMerger:
                 cellsize=cellsize,
                 cutline_path=cutline_path,
                 snap_to_grid=snap_to_grid,
+                track_projects=track_projects,
             )
         finally:
             if cutline_path is not None:
@@ -148,6 +161,9 @@ class DatasetMerger:
         self,
         tiles: Sequence[Tile],
         dataset_vrts: dict[str, Path] | None = None,
+        *,
+        track_projects: bool = False,
+        track_vertical: bool = False,
     ) -> list[Path]:
         """Resolve dataset rasters/VRTs in priority order (oldest to newest).
 
@@ -197,6 +213,7 @@ class DatasetMerger:
             raise ValueError("No datasets to merge")
 
         dataset_rasters: list[Path] = []
+        raster_priorities: list[int] = []
 
         # Process datasets in priority order, but yield separate VRTs for each CRS
         for dataset_id in sorted(dataset_priority.keys(), key=lambda x: dataset_priority[x]):
@@ -233,7 +250,28 @@ class DatasetMerger:
                     vrt_path = self._prepare_dataset(dataset_id, dataset_crs_tiles, crs=crs)
 
                 dataset_rasters.append(vrt_path)
+                raster_priorities.append(priority)
 
+        if track_projects:
+            import pyproj
+            from osgeo import gdal
+
+            from .provenance import add_project_band
+
+            with gdal.ExceptionMgr():
+                for raster in dataset_rasters:
+                    dataset = gdal.Open(str(raster))
+                    crs = pyproj.CRS(dataset.GetProjection())
+                    track_vertical = track_vertical or crs.is_compound or crs.is_vertical
+            dataset_rasters = [
+                add_project_band(
+                    raster,
+                    self.working_dir / f"tracking_{index}.vrt",
+                    priority,
+                    track_vertical=track_vertical,
+                )
+                for index, (raster, priority) in enumerate(zip(dataset_rasters, raster_priorities))
+            ]
         return dataset_rasters
 
     def _prepare_dataset(
@@ -322,6 +360,7 @@ class DatasetMerger:
         cellsize: float | None,
         cutline_path: Path | None,
         snap_to_grid: bool = True,
+        track_projects: bool = False,
     ) -> Path:
         """Run a single gdalwarp call that merges (priority overwrite),
         reprojects, optionally clips and snaps to grid.
@@ -384,6 +423,26 @@ class DatasetMerger:
                 # read with no lasting benefit; only the final COG output is
                 # compressed. Requires adequate scratch disk space.
             ]
+
+            if track_projects:
+                from osgeo import gdal
+
+                with gdal.ExceptionMgr():
+                    source = gdal.Open(str(dataset_rasters[0]))
+                    track_vertical = source.RasterCount == 5
+                cmd.extend(
+                    [
+                        "-ot",
+                        "Float64" if track_vertical else "Float32",
+                        "-srcalpha",
+                        "-dstnodata",
+                        "nan",
+                        "-wo",
+                        "UNIFIED_SRC_NODATA=NO",
+                    ]
+                )
+                if track_vertical:
+                    cmd.append("-vshift")
 
             if snap_to_grid:
                 cmd.append("-tap")  # Target aligned pixels

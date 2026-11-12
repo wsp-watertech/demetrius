@@ -25,6 +25,7 @@ class Manifest:
         no_snap: bool = False,
         no_clip: bool = False,
         no_overviews: bool = False,
+        no_provenance: bool = False,
     ):
         """Create manifest from AOI and tiles.
 
@@ -53,6 +54,7 @@ class Manifest:
         self.no_snap = no_snap
         self.no_clip = no_clip
         self.no_overviews = no_overviews
+        self.no_provenance = no_provenance
 
     def to_dict(self) -> dict[str, Any]:
         """Convert manifest to dictionary for serialization.
@@ -123,7 +125,12 @@ class Manifest:
                 "no_snap": self.no_snap,
                 "no_clip": self.no_clip,
                 "no_overviews": self.no_overviews,
+                "no_provenance": self.no_provenance,
             }
+        if not self.no_provenance and all(tile.priority >= 0 for tile in self.tiles):
+            from .provenance import project_categories
+
+            manifest_dict["projects"] = project_categories(self.tiles)
 
         return manifest_dict
 

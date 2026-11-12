@@ -12,8 +12,41 @@ demetrius process --aoi watershed.shp --output dem.tif
 - Selects the most recent available data
 - Downloads only required tiles
 - Mosaics them into a single Cloud-Optimized GeoTIFF (COG)
+- Writes an aligned integer raster identifying the source project of each DEM pixel
 
 Perfect for hydraulic modeling workflows where data integrity and reproducibility are critical.
+
+### Project provenance
+
+Processing `dem.tif` also produces `dem.projects.tif` by default. Its signed
+integer values match dataset priorities in the manifest and `inspect`: **0 is
+a valid project**, and **-1 is nodata** wherever the DEM is nodata. The rasters
+have identical CRS, extent, cell size, and grid alignment, including AOI
+buffering and clipping.
+
+Project IDs travel through the same merge and resampling operation as the
+elevations, so newer valid data replaces older data and holes retain the older
+project ID. IDs identify the winning dataset, not individual tiles or every
+source cell contributing to interpolation within that dataset. Tiles from
+different CRSs in the same dataset share one ID.
+
+Category names use project/dataset names without CRS suffixes (OPR uses the
+workunit name). A raster attribute table stores names and unique RGBA colors;
+the manifest's `projects` list also records this mapping. Keep
+`dem.projects.tif.aux.xml`, if generated, and `dem.projects.qml` beside the
+raster when copying it. The QML supplies QGIS's categorized display because
+signed integer GeoTIFFs cannot store a conventional palette. Other viewers
+need raster attribute table support to display names and colors.
+
+Project overviews use nearest-neighbor sampling to avoid inventing categories.
+`--no-overviews` skips both rasters' overviews. Use `--no-provenance` with
+`process` or `batch` to produce only the DEM. Offline `process-only` runs
+restore the saved provenance setting. Tracking requires an additional
+intermediate priority and validity bands and a block-wise output pass; allow
+extra scratch and output disk space for large AOIs.
+Compound-CRS inputs retain their existing vertical transformations; two
+additional calibration bands keep those transformations from altering project
+IDs. This case uses higher-precision intermediate storage.
 
 For overlapping datasets, the newer **LiDAR acquisition period** (ScienceBase
 flight Start/End dates) takes precedence over an older one. Datasets without

@@ -114,6 +114,11 @@ def cli():
     default=False,
     help="Enable debug logging",
 )
+@click.option(
+    "--no-provenance",
+    is_flag=True,
+    help="Skip the companion .projects.tif project-priority raster.",
+)
 def process(
     aoi,
     output,
@@ -130,6 +135,7 @@ def process(
     data_dir,
     mode,
     debug,
+    no_provenance,
 ):
     """Process the DEM workflow.
 
@@ -153,6 +159,7 @@ def process(
         no_snap=no_snap,
         no_clip=no_clip,
         no_overviews=no_overviews,
+        no_provenance=no_provenance,
         project_bounds=project_bounds,
         opr_projects=opr_projects,
         require_full_coverage=require_full_coverage,
@@ -171,6 +178,8 @@ def process(
 
     click.echo("\n" + "=" * 70)
     click.echo(f"✓ SUCCESS! DEM saved to: {result.output_path}")
+    if result.projects_path is not None:
+        click.echo(f"Project raster: {result.projects_path}")
     click.echo("=" * 70)
 
 
@@ -398,6 +407,9 @@ def opr_projects_command(aoi: str) -> None:
     default=False,
     help="Enable debug logging",
 )
+@click.option(
+    "--no-provenance", is_flag=True, help="Skip companion .projects.tif project-priority rasters."
+)
 def batch(
     input_path,
     name_field,
@@ -416,6 +428,7 @@ def batch(
     mode,
     max_workers,
     debug,
+    no_provenance,
 ):
     """Batch-process DEMs for every AOI polygon in an input file.
 
@@ -439,6 +452,7 @@ def batch(
             no_snap=no_snap,
             no_clip=no_clip,
             no_overviews=no_overviews,
+            no_provenance=no_provenance,
             project_bounds=project_bounds,
             opr_projects=opr_projects,
             require_full_coverage=require_full_coverage,

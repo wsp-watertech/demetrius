@@ -226,6 +226,21 @@ class InspectionReport:
                     f"        Tiles: {len(ds_tiles)}",
                     f"        LiDAR flight dates: {flight_range}",
                     f"        Publication dates: {publication_range}",
+                    f"        Product: {ds_tiles[0].product}",
+                    f"        Workunit: {ds_tiles[0].workunit or dataset_id}",
+                    "        Source resolution (m): "
+                    + ", ".join(
+                        sorted(
+                            {
+                                str(t.resolution_m)
+                                if t.resolution_m is not None
+                                else ("1" if t.product == "1m" else "unknown")
+                                for t in ds_tiles
+                            }
+                        )
+                    ),
+                    "        Source CRS: "
+                    + ", ".join(sorted({t.source_crs or "not recorded" for t in ds_tiles})),
                 ]
             )
 
@@ -233,7 +248,7 @@ class InspectionReport:
         lines.extend(
             [
                 "\nCoordinate Systems:",
-                "  All tiles are in EPSG:4326 (WGS84)",
+                "  Tile discovery bounds are in EPSG:4326 (WGS84); source raster CRSs vary.",
             ]
         )
 
@@ -337,6 +352,10 @@ class InspectionReport:
                     f"  LiDAR flight dates: {flight_range}",
                     f"  Publication dates: {publication_range}",
                     f"  Total tiles: {len(ds_tiles)}",
+                    (
+                        f"  Product: {ds_tiles[0].product}; workunit: "
+                        f"{ds_tiles[0].workunit or dataset_id}"
+                    ),
                     f"  Strategy: {'BASE LAYER (oldest)' if priority == 0 else 'OVERLAY (higher priority, overwrites previous projects)'}",
                     "",
                 ]
@@ -350,6 +369,11 @@ class InspectionReport:
                 lines.append(f"  Tile: {tile.tile_id}")
                 lines.append(f"    Bounds: {bounds_str}")
                 lines.append(f"    URL: {tile.download_url}")
+                if tile.product == "opr":
+                    lines.append(
+                        f"    Resolution: {tile.resolution_m} m; CRS: {tile.source_crs}; "
+                        f"vertical CRS: {tile.vertical_crs}"
+                    )
 
         lines.append("\n" + "=" * 100)
         return "\n".join(lines)

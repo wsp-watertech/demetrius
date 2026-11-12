@@ -1,7 +1,6 @@
 """Project boundary coverage from USGS or local footprint files."""
 
 import logging
-import time
 from pathlib import Path
 
 import geopandas as gpd
@@ -10,6 +9,7 @@ from shapely.errors import GEOSException
 from shapely.geometry.base import BaseGeometry
 
 from .models import BoundingBox
+from .usgs_index import FootprintQuery
 
 logger = logging.getLogger(__name__)
 
@@ -146,8 +146,6 @@ class ProjectBoundaries:
     @classmethod
     def from_usgs(cls, bbox: BoundingBox) -> "ProjectBoundaries":
         """Query 1-meter DEM project footprints intersecting a WGS84 bounding box."""
-        features = []
-        offset = 0
         params = {
             "where": "1=1",
             "geometry": ",".join(str(value) for value in bbox.as_tuple()),
@@ -163,49 +161,9 @@ class ProjectBoundaries:
         }
 
         with httpx.Client(timeout=30.0) as client:
-            while True:
-                params["resultOffset"] = offset
-                for attempt in range(3):
-                    try:
-                        response = client.get(USGS_PROJECTS_URL, params=params)
-                        response.raise_for_status()
-                        break
-                    except (httpx.RequestError, httpx.HTTPStatusError) as exc:
-                        if (
-                            isinstance(exc, httpx.HTTPStatusError)
-                            and exc.response.status_code < 500
-                        ) or attempt == 2:
-                            raise ValueError(f"USGS project footprint query failed: {exc}") from exc
-                        logger.warning("USGS project footprint query failed, retrying: %s", exc)
-                        time.sleep(2**attempt)
-
-                try:
-                    payload = response.json()
-                except ValueError as exc:
-                    raise ValueError("USGS project footprint query returned invalid JSON") from exc
-                page = payload.get("features") if isinstance(payload, dict) else None
-                if (
-                    not isinstance(payload, dict)
-                    or payload.get("type") != "FeatureCollection"
-                    or not isinstance(page, list)
-                    or any(
-                        not isinstance(feature, dict) or not feature.get("geometry")
-                        for feature in page
-                    )
-                ):
-                    raise ValueError(
-                        "USGS project footprint query returned invalid GeoJSON features"
-                    )
-                features.extend(page)
-                if not page:
-                    if payload.get("exceededTransferLimit"):
-                        raise ValueError(
-                            "USGS project footprint query returned an empty truncated page"
-                        )
-                    break
-                offset += len(page)
-                if len(page) < USGS_PAGE_SIZE and not payload.get("exceededTransferLimit"):
-                    break
+            features = FootprintQuery(
+                client, USGS_PROJECTS_URL, "USGS project footprint", (), USGS_PAGE_SIZE
+            ).fetch(params)
 
         if not features:
             raise ValueError("No USGS 1-meter DEM project footprints intersect the AOI")

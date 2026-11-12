@@ -1,5 +1,6 @@
 """VRT-based mosaicking for efficient large-scale raster merging."""
 
+import hashlib
 import logging
 import os
 import subprocess
@@ -9,6 +10,16 @@ from pathlib import Path
 from .models import Tile
 
 logger = logging.getLogger(__name__)
+
+
+def crs_suffix(crs: str | None) -> str:
+    """Create a short, filesystem-safe identifier even for custom WKT CRSs."""
+    if not crs or crs == "UNKNOWN":
+        return ""
+    identifier = crs.replace(":", "_")
+    if not all(c.isalnum() or c in "_-" for c in identifier):
+        identifier = hashlib.sha256(crs.encode()).hexdigest()[:16]
+    return f"_{identifier}"
 
 
 def materialize_vrt(vrt_path: Path, output_path: Path) -> Path:
@@ -145,13 +156,13 @@ class VRTMosaicker:
                 raise ValueError(f"Tile {tile.id} file not found: {tile.local_path}")
 
         # Include CRS in filename if provided to distinguish multi-CRS datasets
-        crs_suffix = f"_{crs.replace(':', '_')}" if crs and crs != "UNKNOWN" else ""
-        vrt_path = self.working_dir / f"dataset_{dataset_id}{crs_suffix}.vrt"
+        suffix = crs_suffix(crs)
+        vrt_path = self.working_dir / f"dataset_{dataset_id}{suffix}.vrt"
 
         # Get tile paths
         tile_paths = [str(tile.local_path) for tile in tiles]
 
-        logger.info(f"Creating VRT for dataset {dataset_id}{crs_suffix} with {len(tiles)} tiles")
+        logger.info(f"Creating VRT for dataset {dataset_id}{suffix} with {len(tiles)} tiles")
         logger.debug(tiles)
 
         try:

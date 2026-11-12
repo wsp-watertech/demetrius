@@ -7,6 +7,7 @@ other code can call directly.
 """
 
 import logging
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -55,6 +56,7 @@ def batch_process(
     no_clip: bool = False,
     no_overviews: bool = False,
     project_bounds: ProjectBoundaries | str | Path | None = None,
+    opr_projects: Sequence[int] = (),
     require_full_coverage: bool = False,
     data_dir: str | Path | None = None,
     mode: str = "full",
@@ -95,6 +97,8 @@ def batch_process(
         If omitted, query USGS project footprints for each AOI.
     require_full_coverage : bool, default=False
         Require full coverage of each AOI by project boundaries.
+    opr_projects : Sequence[int]
+        OPR catalog project IDs to include for each intersecting AOI.
     data_dir : str | Path | None
         Directory for downloaded tiles. Defaults to ``DEMETRIUS_DATA_DIR`` env var or ``~/.demetrius``.
     mode : {"full", "download-only", "process-only"}
@@ -151,6 +155,7 @@ def batch_process(
             no_clip=no_clip,
             no_overviews=no_overviews,
             project_bounds=project_bounds,
+            opr_projects=opr_projects,
             require_full_coverage=require_full_coverage,
             data_dir=data_dir,
             mode=mode,

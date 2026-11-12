@@ -9,7 +9,7 @@ import pytest
 from click.testing import CliRunner
 from shapely.geometry import box, mapping
 
-from src.demetrius import project_boundaries
+from src.demetrius import project_boundaries, usgs_index
 from src.demetrius.cli import process
 from src.demetrius.models import AOI, BoundingBox, Tile
 from src.demetrius.pipeline import PipelineResult, run_pipeline
@@ -70,7 +70,7 @@ def test_usgs_footprints_query_pages_and_uses_wgs84(monkeypatch):
     ("body", "message"),
     [
         ({"type": "FeatureCollection", "features": []}, "No USGS"),
-        ({"error": {"message": "Invalid request"}}, "invalid GeoJSON"),
+        ({"error": {"message": "Invalid request"}}, "Invalid request"),
         ({"features": [{"type": "Feature", "geometry": None}]}, "invalid GeoJSON"),
     ],
 )
@@ -87,6 +87,112 @@ def test_usgs_footprints_http_error_is_not_silently_ignored(monkeypatch):
     bbox = BoundingBox(min_x=-74.5, min_y=40, max_x=-74.4, max_y=40.1)
 
     with pytest.raises(ValueError, match="USGS project footprint query failed"):
+        ProjectBoundaries.from_usgs(bbox)
+
+
+def test_usgs_footprints_fallback_with_precise_individual_geometry(monkeypatch, caplog):
+    monkeypatch.setattr(usgs_index.time, "sleep", lambda _: None)
+    requests = []
+    geometries = [box(-74.5, 40, -74.45, 40.1), box(-74.45, 40, -74.4, 40.1)]
+
+    def handler(request):
+        requests.append(request)
+        params = request.url.params
+        if params.get("objectIds"):
+            object_id = int(params["objectIds"])
+            if object_id == 10 and params.get("geometryPrecision") is None:
+                return httpx.Response(500)
+            return httpx.Response(
+                200,
+                json={
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "geometry": mapping(geometries[object_id - 10]),
+                            "properties": {"OBJECTID": object_id},
+                        }
+                    ],
+                },
+            )
+        if params["returnGeometry"] == "false":
+            index = int(params["resultOffset"])
+            return httpx.Response(
+                200,
+                json={
+                    "features": [
+                        {
+                            "attributes": {
+                                "OBJECTID": index + 10,
+                                "project": f"p{index}",
+                                "project_id": index + 100,
+                            }
+                        }
+                    ],
+                    "exceededTransferLimit": index == 0,
+                },
+            )
+        return httpx.Response(500)
+
+    _mock_usgs(monkeypatch, handler)
+    bbox = BoundingBox(min_x=-74.5, min_y=40, max_x=-74.4, max_y=40.1)
+    bounds = ProjectBoundaries.from_usgs(bbox)
+    assert len(bounds.gdf) == 2
+    assert bounds.covers_geometry(bbox.to_polygon())
+    assert list(bounds.gdf["project_id"]) == [100, 101]
+    assert [
+        r.url.params["resultOffset"] for r in requests if r.url.params["returnGeometry"] == "false"
+    ] == ["0", "1"]
+    individual = [r for r in requests if r.url.params.get("objectIds")]
+    assert (
+        sum(
+            r.url.params.get("objectIds") == "10" and r.url.params.get("geometryPrecision") is None
+            for r in individual
+        )
+        == 3
+    )
+    assert [
+        r.url.params["geometryPrecision"]
+        for r in individual
+        if r.url.params.get("geometryPrecision")
+    ] == ["9"]
+    assert all(r.url.params["geometry"] == "-74.5,40.0,-74.4,40.1" for r in requests)
+    assert "rounded to nine decimal places" in caplog.text
+
+
+@pytest.mark.parametrize("failure", ["server", "missing", "wrong_id"])
+def test_usgs_footprints_fallback_fails_if_individual_footprint_unavailable(monkeypatch, failure):
+    monkeypatch.setattr(usgs_index.time, "sleep", lambda _: None)
+
+    def handler(request):
+        params = request.url.params
+        if params.get("objectIds"):
+            if failure == "server":
+                return httpx.Response(500)
+            features = (
+                []
+                if failure == "missing"
+                else [
+                    {
+                        "type": "Feature",
+                        "geometry": mapping(box(-75, 40, -74, 41)),
+                        "properties": {"OBJECTID": 999},
+                    }
+                ]
+            )
+            return httpx.Response(200, json={"type": "FeatureCollection", "features": features})
+        if params["returnGeometry"] == "false":
+            return httpx.Response(
+                200,
+                json={
+                    "features": [{"attributes": {"OBJECTID": 10, "project": "p", "project_id": 1}}]
+                },
+            )
+        return httpx.Response(500)
+
+    _mock_usgs(monkeypatch, handler)
+    bbox = BoundingBox(min_x=-74.5, min_y=40, max_x=-74.4, max_y=40.1)
+    with pytest.raises(ValueError, match="OBJECTID 10"):
         ProjectBoundaries.from_usgs(bbox)
 
 
@@ -131,6 +237,7 @@ def test_pipeline_queries_usgs_by_default(sample_job, tmp_path):
     with (
         patch("src.demetrius.tnm.TNMTileSource") as source,
         patch.object(ProjectBoundaries, "from_usgs", return_value=bounds) as usgs,
+        patch("src.demetrius.downloader.TileDownloader.download", return_value=[tile]),
     ):
         source.return_value.search.return_value = [tile]
         result = run_pipeline(
@@ -148,6 +255,7 @@ def test_pipeline_explicit_file_skips_usgs(sample_job, tmp_path):
         patch("src.demetrius.tnm.TNMTileSource") as source,
         patch.object(ProjectBoundaries, "from_file", return_value=bounds) as from_file,
         patch.object(ProjectBoundaries, "from_usgs") as usgs,
+        patch("src.demetrius.downloader.TileDownloader.download", return_value=[tile]),
     ):
         source.return_value.search.return_value = [tile]
         result = run_pipeline(

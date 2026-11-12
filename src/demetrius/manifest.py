@@ -19,6 +19,12 @@ class Manifest:
         tiles: list[Tile],
         buffer: int = 0,
         cellsize: float | None = None,
+        *,
+        opr_projects: list[int] | None = None,
+        output_crs: str | None = None,
+        no_snap: bool = False,
+        no_clip: bool = False,
+        no_overviews: bool = False,
     ):
         """Create manifest from AOI and tiles.
 
@@ -42,6 +48,11 @@ class Manifest:
         self.tiles = tiles
         self.buffer = buffer
         self.cellsize = cellsize
+        self.opr_projects = opr_projects or []
+        self.output_crs = output_crs
+        self.no_snap = no_snap
+        self.no_clip = no_clip
+        self.no_overviews = no_overviews
 
     def to_dict(self) -> dict[str, Any]:
         """Convert manifest to dictionary for serialization.
@@ -51,8 +62,12 @@ class Manifest:
         dict[str, Any]
             Dictionary representation of the manifest.
         """
+        from shapely.geometry import mapping
+
         manifest_dict = {
+            "schema_version": 2,
             "aoi": {
+                "geometry": mapping(self.aoi.geometry),
                 "bounds": {
                     "min_x": float(self.aoi.bounds().min_x),
                     "min_y": float(self.aoi.bounds().min_y),
@@ -80,6 +95,20 @@ class Manifest:
                         "max_y": float(tile.bounds_wgs84.max_y),
                     },
                     "local_path": tile.local_path,
+                    "id": tile.id,
+                    **tile.model_dump(
+                        mode="json",
+                        include={
+                            "product",
+                            "project_id",
+                            "workunit",
+                            "source_id",
+                            "metadata_url",
+                            "source_crs",
+                            "vertical_crs",
+                            "resolution_m",
+                        },
+                    ),
                 }
                 for tile in self.tiles
             ],
@@ -87,6 +116,14 @@ class Manifest:
 
         if self.cellsize is not None:
             manifest_dict["cellsize"] = self.cellsize
+        manifest_dict["opr_projects"] = self.opr_projects
+        if self.output_crs is not None:
+            manifest_dict["processing"] = {
+                "output_crs": self.output_crs,
+                "no_snap": self.no_snap,
+                "no_clip": self.no_clip,
+                "no_overviews": self.no_overviews,
+            }
 
         return manifest_dict
 
@@ -133,14 +170,18 @@ class Manifest:
         aoi_data = data["aoi"]
         aoi_bounds = aoi_data["bounds"]
 
-        # Reconstruct AOI from bounds (as box polygon)
-        from shapely.geometry import box
+        # Older manifests stored only the bounding box.
+        from shapely.geometry import box, shape
 
-        geometry = box(
-            aoi_bounds["min_x"],
-            aoi_bounds["min_y"],
-            aoi_bounds["max_x"],
-            aoi_bounds["max_y"],
+        geometry = (
+            shape(aoi_data["geometry"])
+            if "geometry" in aoi_data
+            else box(
+                aoi_bounds["min_x"],
+                aoi_bounds["min_y"],
+                aoi_bounds["max_x"],
+                aoi_bounds["max_y"],
+            )
         )
         aoi = AOI(
             geometry=geometry,
@@ -153,7 +194,7 @@ class Manifest:
         for tile_data in data.get("tiles", []):
             bounds = tile_data["bounds"]
             tile = Tile(
-                id=f"{tile_data['dataset_id']}_{tile_data['tile_id']}",
+                id=tile_data.get("id", f"{tile_data['dataset_id']}_{tile_data['tile_id']}"),
                 dataset_id=tile_data["dataset_id"],
                 tile_id=tile_data["tile_id"],
                 publication_date=tile_data.get("publication_date", "2021-01-01T00:00:00"),
@@ -169,6 +210,20 @@ class Manifest:
                 ),
                 priority=tile_data.get("priority", -1),
                 local_path=tile_data.get("local_path"),
+                **{
+                    key: tile_data[key]
+                    for key in (
+                        "product",
+                        "project_id",
+                        "workunit",
+                        "source_id",
+                        "metadata_url",
+                        "source_crs",
+                        "vertical_crs",
+                        "resolution_m",
+                    )
+                    if key in tile_data
+                },
             )
             tiles.append(tile)
 
@@ -178,4 +233,6 @@ class Manifest:
             tiles=tiles,
             buffer=data.get("buffer", data.get("buffer_distance", 0)),
             cellsize=cellsize,
+            opr_projects=data.get("opr_projects", []),
+            **data.get("processing", {}),
         )

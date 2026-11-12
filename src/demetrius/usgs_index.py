@@ -105,6 +105,7 @@ class FootprintQuery:
             "returnGeometry": "false",
             "f": "json",
         }
+        attributes_params.pop("maxAllowableOffset", None)
         records = self._pages(attributes_params, geometry=False)
         features = []
         for record in records:
@@ -117,16 +118,7 @@ class FootprintQuery:
                 "resultRecordCount": 1,
             }
             try:
-                try:
-                    payload = self._request_json(geometry_params)
-                except _RetryableQueryError:
-                    logger.warning(
-                        "%s OBJECTID %s failed; retrying with coordinates "
-                        "rounded to nine decimal places",
-                        self.label,
-                        object_id,
-                    )
-                    payload = self._request_json({**geometry_params, "geometryPrecision": 9})
+                payload = self._request_json(geometry_params)
             except ValueError as exc:
                 raise ValueError(
                     f"Could not retrieve {self.label} footprint OBJECTID {object_id}: {exc}"
@@ -152,6 +144,7 @@ class FootprintQuery:
 
     def fetch(self, params: dict[str, str | int]) -> list[dict[str, Any]]:
         """Fetch all footprints, falling back only on persistent server/transport failures."""
+        params = {**params, "maxAllowableOffset": "0.0001"}
         try:
             return self._pages(params, geometry=True)
         except _RetryableQueryError as exc:

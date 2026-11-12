@@ -21,6 +21,7 @@ from shapely.geometry import mapping
 from shapely.geometry.base import BaseGeometry
 
 from .models import Tile
+from .mosaicker import crs_suffix
 
 logger = logging.getLogger(__name__)
 
@@ -269,8 +270,7 @@ class DatasetMerger:
 
         # Multiple tiles: create VRT
         # Include CRS in filename if provided to distinguish multi-CRS datasets
-        crs_suffix = f"_{crs.replace(':', '_')}" if crs and crs != "UNKNOWN" else ""
-        vrt_path = Path(tempfile.gettempdir()) / f"dataset_{dataset_id}{crs_suffix}.vrt"
+        vrt_path = Path(tempfile.gettempdir()) / f"dataset_{dataset_id}{crs_suffix(crs)}.vrt"
         tile_paths = [str(Path(t.local_path)) for t in tiles]
 
         cmd = ["gdalbuildvrt", "-quiet", str(vrt_path)] + tile_paths

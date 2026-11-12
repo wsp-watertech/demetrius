@@ -24,6 +24,10 @@ DEFAULT_PAGE_SIZE = 25  # Reduced from 50 for more resilient requests
 class TNMTileSource(TileSource):
     """Query USGS TNM Access API for 3DEP DEM tiles."""
 
+    dataset_name = "Digital Elevation Model (DEM) 1 meter"
+    product_formats = "GeoTIFF"
+    strict_parsing = False
+
     def __init__(self, timeout: float = 30.0):
         """Initialize TNM client.
 
@@ -76,8 +80,8 @@ class TNMTileSource(TileSource):
         while True:
             params = {
                 "bbox": f"{aoi_bbox.min_x},{aoi_bbox.min_y},{aoi_bbox.max_x},{aoi_bbox.max_y}",
-                "datasets": "Digital Elevation Model (DEM) 1 meter",
-                "prodFormats": "GeoTIFF",
+                "datasets": self.dataset_name,
+                "prodFormats": self.product_formats,
                 "outputFormat": "JSON",
                 "max": page_size,
                 "offset": offset,
@@ -108,11 +112,15 @@ class TNMTileSource(TileSource):
 
             # Parse items on this page
             for item in items:
+                if not self._accept_item(item):
+                    continue
                 try:
                     tile = self._parse_tnm_item(item)
                     tiles.append(tile)
                     logger.debug(f"Parsed tile: {tile.id}")
                 except ValueError as e:
+                    if self.strict_parsing:
+                        raise ValueError(f"Invalid selected OPR product: {e}") from e
                     logger.warning(f"Skipped TNM item: {e}")
                     continue
 
@@ -133,6 +141,10 @@ class TNMTileSource(TileSource):
 
         logger.info(f"Found {len(tiles)} tiles from TNM (total {total} items)")
         return tiles
+
+    def _accept_item(self, item: dict[str, Any]) -> bool:
+        """Select products before fetching their detailed metadata."""
+        return True
 
     def _get_with_backoff(self, params: dict) -> httpx.Response:
         """Execute TNM API request with exponential backoff retry on 5xx errors.

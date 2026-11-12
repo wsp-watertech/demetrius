@@ -2,6 +2,7 @@
 
 import logging
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from shapely.errors import GEOSException
@@ -120,8 +121,16 @@ class Tile(BaseModel):
     flight_end: datetime | None = Field(default=None, description="Lidar acquisition end date")
     download_url: str = Field(..., description="Direct download URL from TNM")
     bounds_wgs84: BoundingBox = Field(..., description="Bounding box in EPSG:4326")
-    priority: int = Field(..., description="Dataset priority (0=newest, 1, 2...)")
+    priority: int = Field(..., description="Overlay order (0=base; higher values overwrite lower)")
     local_path: str | None = Field(default=None, description="Local file path after download")
+    product: Literal["1m", "opr"] = "1m"
+    project_id: int | None = None
+    workunit: str | None = None
+    source_id: str | None = None
+    metadata_url: str | None = None
+    source_crs: str | None = None
+    vertical_crs: str | None = None
+    resolution_m: float | None = None
 
 
 class AOI(BaseModel):

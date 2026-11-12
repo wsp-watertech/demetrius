@@ -10,7 +10,7 @@ import logging
 import os
 import tempfile
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -116,6 +116,7 @@ def run_pipeline(
     no_clip: bool = False,
     no_overviews: bool = False,
     project_bounds: ProjectBoundaries | str | Path | None = None,
+    opr_projects: Sequence[int] = (),
     require_full_coverage: bool = False,
     data_dir: str | Path | None = None,
     mode: PipelineMode = "full",
@@ -157,6 +158,8 @@ def run_pipeline(
     project_bounds : ProjectBoundaries | str | Path | None
         Project boundaries instance or file path. If omitted, fetch 1-meter DEM
         project footprints from the USGS Elevation Index.
+    opr_projects : Sequence[int]
+        Explicit OPR catalog project IDs to include alongside standard 1m data.
     require_full_coverage : bool, default=False
         Require full coverage of the original AOI by project boundaries.
     data_dir : str | Path | None
@@ -196,6 +199,7 @@ def run_pipeline(
         from .tnm import TNMTileSource
 
         output_path = Path(output)
+        manifest_path = output_path.parent / f"{output_path.stem}.tif.manifest.json"
 
         # Resolve AOI
         if isinstance(aoi, AOI):
@@ -209,6 +213,23 @@ def run_pipeline(
             proj_bounds = project_bounds
         else:
             proj_bounds = ProjectBoundaries.from_file(str(project_bounds))
+
+        if mode == "process-only":
+            if opr_projects:
+                raise ValueError(
+                    "OPR selection is fixed by the saved manifest in process-only mode"
+                )
+            _report("Loading manifest for process-only mode...")
+            manifest = Manifest.load(manifest_path)
+            aoi_obj = manifest.aoi
+            prioritized_tiles = manifest.tiles
+            if manifest.output_crs is not None:
+                output_crs = manifest.output_crs
+                cellsize = manifest.cellsize
+                no_snap = manifest.no_snap
+                no_clip = manifest.no_clip
+                no_overviews = manifest.no_overviews
+                ffrd = False
 
         # Handle --ffrd behavior
         if ffrd:
@@ -239,6 +260,10 @@ def run_pipeline(
             source = TNMTileSource()
             initial_bbox = aoi_obj.bounds()
             initial_tiles = source.search(initial_bbox)
+            if not initial_tiles and opr_projects:
+                from .opr import OPRTileSource
+
+                initial_tiles = OPRTileSource(opr_projects).search(initial_bbox)
             if initial_tiles:
                 output_crs = get_target_utm_for_tiles(initial_tiles)
                 _report(f"Auto-selected target CRS: {output_crs}")
@@ -262,7 +287,7 @@ def run_pipeline(
             _report("Querying TNM for tiles...")
             source = TNMTileSource()
 
-            if buffer > 0:
+            if aoi_obj.buffer > 0:
                 try:
                     buffered_geom_in_output_crs = aoi_obj.buffered_geometry_in_crs(output_crs)
                     bounds = buffered_geom_in_output_crs.bounds
@@ -295,12 +320,26 @@ def run_pipeline(
 
             all_tiles = source.search(buffered_bbox)
 
-            if proj_bounds is None:
+            opr_tiles: list[Tile] = []
+            opr_bounds = None
+            if opr_projects:
+                from .opr import OPRTileSource
+
+                _report(f"Querying selected OPR projects: {list(opr_projects)}")
+                opr_source = OPRTileSource(opr_projects)
+                opr_tiles = opr_source.search(buffered_bbox)
+                opr_bounds = opr_source.footprints(opr_tiles)
+                if not opr_tiles:
+                    _report("Warning: selected OPR projects have no tiles intersecting this AOI")
+
+            if proj_bounds is None and (all_tiles or not opr_projects):
                 _report("Querying USGS 1-meter DEM project footprints...")
                 proj_bounds = ProjectBoundaries.from_usgs(buffered_bbox)
 
             _report("Filtering tiles by AOI intersection...")
             filtered_tiles = filter_tiles_by_aoi(all_tiles, aoi_obj, proj_bounds)
+            if opr_tiles:
+                filtered_tiles.extend(filter_tiles_by_aoi(opr_tiles, aoi_obj, opr_bounds))
 
             _report("Prioritizing datasets...")
             prioritized_tiles = prioritize_datasets(filtered_tiles)
@@ -311,30 +350,30 @@ def run_pipeline(
                 )
 
             _report("Validating coverage...")
+            if opr_projects:
+                from .opr import combine_footprints
+
+                proj_bounds = combine_footprints(proj_bounds, opr_bounds)
             validate_coverage(prioritized_tiles, aoi_obj, proj_bounds, require_full_coverage)
 
             dataset_count = len({t.dataset_id for t in prioritized_tiles})
             _report(f"Found {len(prioritized_tiles)} tiles from {dataset_count} datasets")
 
-            manifest = Manifest(aoi_obj, prioritized_tiles, buffer, cellsize)
-            manifest_path = output_path.parent / f"{output_path.stem}.tif.manifest.json"
+            manifest = Manifest(
+                aoi_obj,
+                prioritized_tiles,
+                aoi_obj.buffer,
+                effective_cellsize,
+                opr_projects=list(opr_projects),
+                output_crs=output_crs,
+                no_snap=no_snap,
+                no_clip=no_clip,
+                no_overviews=no_overviews,
+            )
             manifest.save(manifest_path)
             _report(f"Saved manifest to {manifest_path}")
 
-            if mode == "download-only":
-                return PipelineResult(
-                    name=name,
-                    status="success",
-                    manifest_path=manifest_path,
-                    tile_count=len(prioritized_tiles),
-                    dataset_count=dataset_count,
-                )
         else:
-            _report("Loading manifest for process-only mode...")
-            manifest_path = output_path.parent / f"{output_path.stem}.tif.manifest.json"
-            manifest = Manifest.load(manifest_path)
-            prioritized_tiles = manifest.tiles
-            aoi_obj = manifest.aoi
             _report(f"Loaded {len(prioritized_tiles)} tiles from manifest")
 
         dataset_count = len({t.dataset_id for t in prioritized_tiles})
@@ -349,17 +388,43 @@ def run_pipeline(
             downloader = TileDownloader(data_dir=data_dir, progress_callback=_download_progress)
             downloaded_tiles = downloader.download(prioritized_tiles)
             _report(f"Downloaded {len(downloaded_tiles)} tiles")
+            if not downloaded_tiles:
+                raise ValueError("No readable DEM tiles are available after download validation")
 
             for tile in downloaded_tiles:
                 for orig_tile in prioritized_tiles:
                     if orig_tile.id == tile.id:
                         orig_tile.local_path = tile.local_path
+            downloaded_ids = {tile.id for tile in downloaded_tiles}
+            missing_opr = [
+                tile.id
+                for tile in prioritized_tiles
+                if tile.product == "opr" and tile.id not in downloaded_ids
+            ]
+            if missing_opr:
+                raise ValueError(f"Selected OPR tiles failed validation: {', '.join(missing_opr)}")
+            prioritized_tiles = [tile for tile in prioritized_tiles if tile.id in downloaded_ids]
+            manifest.tiles = prioritized_tiles
+            manifest.save(manifest_path)
         else:
             downloaded_tiles = prioritized_tiles
+        dataset_count = len({tile.dataset_id for tile in downloaded_tiles})
+
+        if mode == "download-only":
+            return PipelineResult(
+                name=name,
+                status="success",
+                manifest_path=manifest_path,
+                tile_count=len(downloaded_tiles),
+                dataset_count=dataset_count,
+            )
 
         # Step 3: Create VRTs and mosaic
         _report("Mosaicking tiles...")
         with tempfile.TemporaryDirectory() as tmpdir:
+            from .opr_normalizer import normalize_opr_tiles
+
+            downloaded_tiles = normalize_opr_tiles(downloaded_tiles, Path(tmpdir))
             mosaicker = VRTMosaicker(Path(tmpdir))
 
             # Group tiles by (dataset_id, crs) to create separate VRTs for each projection

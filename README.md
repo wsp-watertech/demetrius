@@ -242,6 +242,58 @@ query or an AOI with no project footprints fails explicitly rather than
 assuming tile bounding boxes represent actual coverage. For batch processing,
 the default lookup runs separately for each AOI.
 
+If a combined 1m or OPR footprint request fails, demetrius retries and then
+retrieves footprints individually. If an individual footprint also fails,
+it retries with coordinates rounded to nine decimal places in WGS84 and logs
+a warning. If any footprint remains unavailable, the query fails rather than
+assuming incomplete coverage.
+
+### Include selected OPR DEM projects
+
+Standard 3DEP 1m data remains the default. To include newer Original Product
+Resolution (OPR) **DEM rasters** from specific projects, first look up their
+numeric USGS Elevation Index project IDs:
+
+```bash
+demetrius opr-projects --aoi site.shp
+demetrius inspect --aoi site.shp --opr-project 300169
+demetrius process --aoi site.shp --output dem.tif --opr-project 300169
+```
+
+If the USGS index fails to return multiple footprints together, demetrius
+retries and then requests individual workunit footprints. It reports an error
+if any required footprint cannot be retrieved.
+
+`--opr-project` is repeatable and is also supported by `batch`. Only explicitly
+selected projects are included; selection does not force an OPR project above
+newer 1m data. OPR workunits retain their individual flight dates and are
+ordered with the 1m datasets by flight end, then start. Identical flight
+periods prefer standardized 1m data. Missing flight dates are reported and
+ranked below dated datasets, never replaced with publication dates.
+
+Different source resolutions and horizontal projections are resampled into
+the same output grid. Including finer-resolution OPR data does not change
+the default output resolution (1 meter in target CRS units, or the FFRD
+default); set `--cellsize` to choose another resolution. Coverage checks
+include footprints of the selected OPR workunits, including areas without
+1m coverage.
+
+OPR elevations are converted to meters before mixing, without modifying
+cached source rasters. Their vertical datum must match the 1m inputs.
+When the 1m rasters do not embed a vertical CRS, NAVD88 is used with a warning.
+Unknown, conflicting, or incompatible OPR vertical references and units cause
+an error; automatic vertical-datum transformations are not supported.
+If only OPR data is available, all selected inputs must share a vertical datum.
+Source elevation units must be meters, international feet, or US survey feet,
+or be defined by a valid vertical CRS.
+
+The manifest records selected project IDs, resolved tiles and source metadata,
+the AOI polygon, and effective output settings. `--mode download-only` saves
+the plan and downloads the tiles; `--mode process-only` reuses the saved
+selection and output grid without querying the catalog. Do not pass
+`--opr-project` in process-only mode. Python callers can pass
+`opr_projects=[300169]` to `run_pipeline` or `batch_process`.
+
 ### Preview Tiles (No Download)
 
 Inspect what tiles would be used without downloading:

@@ -84,6 +84,13 @@ def cli():
     help="Project boundaries file (default: query USGS 1-meter DEM project footprints)",
 )
 @click.option(
+    "--opr-project",
+    "opr_projects",
+    multiple=True,
+    type=click.IntRange(min=1),
+    help="Include an OPR catalog project ID (repeatable; see opr-projects).",
+)
+@click.option(
     "--require-full-coverage",
     is_flag=True,
     default=False,
@@ -118,6 +125,7 @@ def process(
     no_clip,
     no_overviews,
     project_bounds,
+    opr_projects,
     require_full_coverage,
     data_dir,
     mode,
@@ -146,6 +154,7 @@ def process(
         no_clip=no_clip,
         no_overviews=no_overviews,
         project_bounds=project_bounds,
+        opr_projects=opr_projects,
         require_full_coverage=require_full_coverage,
         data_dir=data_dir,
         mode=mode,
@@ -183,7 +192,14 @@ def process(
     default=False,
     help="Show detailed per-tile list grouped by project (in addition to summary)",
 )
-def inspect(aoi: str, project_bounds: str, verbose: bool) -> None:
+@click.option(
+    "--opr-project",
+    "opr_projects",
+    multiple=True,
+    type=click.IntRange(min=1),
+    help="Include an OPR catalog project ID (repeatable; see opr-projects).",
+)
+def inspect(aoi: str, project_bounds: str, verbose: bool, opr_projects: tuple[int, ...]) -> None:
     """Inspect available tiles for an AOI without downloading them."""
     try:
         from .coverage import validate_coverage
@@ -199,16 +215,28 @@ def inspect(aoi: str, project_bounds: str, verbose: bool) -> None:
         buffered_bbox = aoi_obj.buffered_bounds()
         all_tiles = source.search(buffered_bbox)
 
+        opr_tiles = []
+        opr_bounds = None
+        if opr_projects:
+            from .opr import OPRTileSource
+
+            source_opr = OPRTileSource(opr_projects)
+            opr_tiles = source_opr.search(buffered_bbox)
+            opr_bounds = source_opr.footprints(opr_tiles)
+            if not opr_tiles:
+                click.echo("Warning: selected OPR projects have no tiles intersecting this AOI")
+        project_bounds_obj = None
         if project_bounds:
             project_bounds_obj = ProjectBoundaries.from_file(project_bounds)
             click.echo(f"✓ Loaded project boundaries from {project_bounds}")
-        else:
+        elif all_tiles or not opr_projects:
             click.echo("Querying USGS 1-meter DEM project footprints...")
             project_bounds_obj = ProjectBoundaries.from_usgs(buffered_bbox)
 
         # Filter by AOI
         click.echo("Filtering tiles by AOI intersection...")
         filtered_tiles = filter_tiles_by_aoi(all_tiles, aoi_obj, project_bounds_obj)
+        filtered_tiles.extend(filter_tiles_by_aoi(opr_tiles, aoi_obj, opr_bounds))
 
         # Prioritize datasets
         click.echo("Prioritizing datasets...")
@@ -216,6 +244,10 @@ def inspect(aoi: str, project_bounds: str, verbose: bool) -> None:
 
         # Validate coverage
         click.echo("Validating coverage...")
+        if opr_projects:
+            from .opr import combine_footprints
+
+            project_bounds_obj = combine_footprints(project_bounds_obj, opr_bounds)
         validate_coverage(
             prioritized_tiles,
             aoi_obj,
@@ -236,6 +268,30 @@ def inspect(aoi: str, project_bounds: str, verbose: bool) -> None:
     except (OSError, TypeError, ValueError, RuntimeError) as e:
         click.echo(f"✗ Error: {e}", err=True)
         raise click.Abort() from e
+
+
+@cli.command("opr-projects")
+@click.option("--aoi", required=True, type=click.Path(exists=True))
+def opr_projects_command(aoi: str) -> None:
+    """List selectable OPR project IDs and workunit metadata near an AOI."""
+    from .opr import _date, query_projects
+
+    try:
+        features = query_projects(bbox=AOI.from_file(aoi).bounds())
+        if not features:
+            click.echo("No OPR projects intersect the AOI")
+        for feature in features:
+            props = feature["properties"]
+            start, end = _date(props.get("collect_start")), _date(props.get("collect_end"))
+            click.echo(
+                f"{props['project_id']} | {props['project']} | {props['workunit']}\n"
+                f"  Flight: {start.date() if start else 'unknown'} to "
+                f"{end.date() if end else 'unknown'} | "
+                f"Resolution: {props.get('dem_gsd_meters')} m | "
+                f"Horizontal: {props.get('horiz_crs')} | Vertical: {props.get('vert_crs')}"
+            )
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 @cli.command()
@@ -312,6 +368,13 @@ def inspect(aoi: str, project_bounds: str, verbose: bool) -> None:
     help="Require full coverage of each AOI (default: coverage is optional)",
 )
 @click.option(
+    "--opr-project",
+    "opr_projects",
+    multiple=True,
+    type=click.IntRange(min=1),
+    help="Include an OPR catalog project ID in each AOI (repeatable).",
+)
+@click.option(
     "--data-dir",
     type=click.Path(),
     default=None,
@@ -347,6 +410,7 @@ def batch(
     no_clip,
     no_overviews,
     project_bounds,
+    opr_projects,
     require_full_coverage,
     data_dir,
     mode,
@@ -376,6 +440,7 @@ def batch(
             no_clip=no_clip,
             no_overviews=no_overviews,
             project_bounds=project_bounds,
+            opr_projects=opr_projects,
             require_full_coverage=require_full_coverage,
             data_dir=data_dir,
             mode=mode,

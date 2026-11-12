@@ -7,6 +7,8 @@ import re
 import subprocess
 from collections.abc import Sequence
 
+import pyproj
+
 from .models import Tile
 
 logger = logging.getLogger(__name__)
@@ -48,17 +50,10 @@ def get_crs_from_raster(raster_path: str) -> str | None:
 
             if "wkt" in coord_sys:
                 wkt = coord_sys["wkt"]
-
-                # Try modern WKT format: ID["EPSG",26917]
-                # Get the last occurrence (the main CRS ID, not sub-component IDs)
-                matches = list(re.finditer(r'ID\["EPSG",(\d{5})\]', wkt))
-                if matches:
-                    return f"EPSG:{matches[-1].group(1)}"
-
-                # Try old WKT format: AUTHORITY["EPSG","32618"]
-                match = re.search(r'AUTHORITY\["EPSG","(\d{5})"\]', wkt)
-                if match:
-                    return f"EPSG:{match.group(1)}"
+                crs = pyproj.CRS(wkt)
+                horizontal = crs.sub_crs_list[0] if crs.is_compound else crs
+                authority = horizontal.to_authority()
+                return ":".join(authority) if authority else horizontal.to_wkt()
 
         return None
 

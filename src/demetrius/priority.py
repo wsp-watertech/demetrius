@@ -75,7 +75,7 @@ def _sort_datasets_by_priority(dataset_ids: list[str], all_tiles: Sequence[Tile]
     list[str]
         Sorted dataset identifiers in priority order.
     """
-    dataset_metadata: dict[str, tuple[bool, int, int, str]] = {}
+    dataset_metadata: dict[str, tuple[bool, int, int, bool, str]] = {}
 
     for dataset_id in dataset_ids:
         dataset_tiles = [t for t in all_tiles if t.dataset_id == dataset_id]
@@ -98,7 +98,13 @@ def _sort_datasets_by_priority(dataset_ids: list[str], all_tiles: Sequence[Tile]
             start = max(flight_start.date().toordinal() for flight_start, _ in complete)
         else:
             end = start = 0
-        dataset_metadata[dataset_id] = (bool(complete), end, start, dataset_id)
+        dataset_metadata[dataset_id] = (
+            bool(complete),
+            end,
+            start,
+            dataset_tiles[0].product == "1m",
+            dataset_id,
+        )
 
     # Undated projects form the base; a later flight always overlays an earlier flight.
     sorted_ids = sorted(

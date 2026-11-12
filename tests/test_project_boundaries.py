@@ -64,6 +64,7 @@ def test_usgs_footprints_query_pages_and_uses_wgs84(monkeypatch):
     assert requests[0].url.params["outSR"] == "4326"
     assert requests[0].url.params["returnGeometry"] == "true"
     assert requests[0].url.params["orderByFields"] == "OBJECTID ASC"
+    assert all(r.url.params["maxAllowableOffset"] == "0.0001" for r in requests)
 
 
 @pytest.mark.parametrize(
@@ -90,7 +91,7 @@ def test_usgs_footprints_http_error_is_not_silently_ignored(monkeypatch):
         ProjectBoundaries.from_usgs(bbox)
 
 
-def test_usgs_footprints_fallback_with_precise_individual_geometry(monkeypatch, caplog):
+def test_usgs_footprints_fallback_with_simplified_individual_geometry(monkeypatch):
     monkeypatch.setattr(usgs_index.time, "sleep", lambda _: None)
     requests = []
     geometries = [box(-74.5, 40, -74.45, 40.1), box(-74.45, 40, -74.4, 40.1)]
@@ -100,8 +101,6 @@ def test_usgs_footprints_fallback_with_precise_individual_geometry(monkeypatch, 
         params = request.url.params
         if params.get("objectIds"):
             object_id = int(params["objectIds"])
-            if object_id == 10 and params.get("geometryPrecision") is None:
-                return httpx.Response(500)
             return httpx.Response(
                 200,
                 json={
@@ -144,27 +143,24 @@ def test_usgs_footprints_fallback_with_precise_individual_geometry(monkeypatch, 
         r.url.params["resultOffset"] for r in requests if r.url.params["returnGeometry"] == "false"
     ] == ["0", "1"]
     individual = [r for r in requests if r.url.params.get("objectIds")]
-    assert (
-        sum(
-            r.url.params.get("objectIds") == "10" and r.url.params.get("geometryPrecision") is None
-            for r in individual
-        )
-        == 3
+    assert [r.url.params["objectIds"] for r in individual] == ["10", "11"]
+    assert all(r.url.params["maxAllowableOffset"] == "0.0001" for r in individual)
+    assert all("geometryPrecision" not in r.url.params for r in requests)
+    assert all(
+        "maxAllowableOffset" not in r.url.params
+        for r in requests
+        if r.url.params["returnGeometry"] == "false"
     )
-    assert [
-        r.url.params["geometryPrecision"]
-        for r in individual
-        if r.url.params.get("geometryPrecision")
-    ] == ["9"]
     assert all(r.url.params["geometry"] == "-74.5,40.0,-74.4,40.1" for r in requests)
-    assert "rounded to nine decimal places" in caplog.text
 
 
 @pytest.mark.parametrize("failure", ["server", "missing", "wrong_id"])
 def test_usgs_footprints_fallback_fails_if_individual_footprint_unavailable(monkeypatch, failure):
     monkeypatch.setattr(usgs_index.time, "sleep", lambda _: None)
+    requests = []
 
     def handler(request):
+        requests.append(request)
         params = request.url.params
         if params.get("objectIds"):
             if failure == "server":
@@ -194,6 +190,9 @@ def test_usgs_footprints_fallback_fails_if_individual_footprint_unavailable(monk
     bbox = BoundingBox(min_x=-74.5, min_y=40, max_x=-74.4, max_y=40.1)
     with pytest.raises(ValueError, match="OBJECTID 10"):
         ProjectBoundaries.from_usgs(bbox)
+    assert all("geometryPrecision" not in request.url.params for request in requests)
+    if failure == "server":
+        assert len([r for r in requests if r.url.params.get("objectIds")]) == 3
 
 
 def test_project_intersection_checks_geometry_not_only_bounds():

@@ -102,6 +102,7 @@ def test_project_lookup_pages_and_validates_exact_ids(monkeypatch):
     assert [r.url.params["resultOffset"] for r in requests] == ["0", "1"]
     assert requests[0].url.params["where"] == "project_id IN (300169)"
     assert requests[0].url.params["outSR"] == "4326"
+    assert all(r.url.params["maxAllowableOffset"] == "0.0001" for r in requests)
     with pytest.raises(ValueError, match="Unknown OPR project ID"):
         opr.query_projects(project_ids=[999])
 
@@ -204,6 +205,17 @@ def test_project_lookup_falls_back_to_paginated_attributes_and_individual_footpr
     footprint_requests = [r for r in requests if r.url.params.get("objectIds")]
     assert [r.url.params["objectIds"] for r in footprint_requests] == ["10", "11"]
     assert all(r.url.params["outSR"] == "4326" for r in requests)
+    assert all(
+        r.url.params["maxAllowableOffset"] == "0.0001"
+        for r in requests
+        if r.url.params["returnGeometry"] == "true"
+    )
+    assert all(
+        "maxAllowableOffset" not in r.url.params
+        for r in requests
+        if r.url.params["returnGeometry"] == "false"
+    )
+    assert all("geometryPrecision" not in r.url.params for r in requests)
     if selection == "bbox":
         assert all(r.url.params["geometry"] == "-85.0,37.0,-83.0,39.0" for r in requests)
     else:

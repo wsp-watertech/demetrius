@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "demetrius"
-version = "0.1.0b2"
+version = "0.1.0b3"
 description = "DEM assembly from USGS 3DEP data"
 readme = "README.md"
 license = {text = "MIT"}

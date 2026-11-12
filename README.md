@@ -242,11 +242,11 @@ query or an AOI with no project footprints fails explicitly rather than
 assuming tile bounding boxes represent actual coverage. For batch processing,
 the default lookup runs separately for each AOI.
 
-If a combined 1m or OPR footprint request fails, demetrius retries and then
-retrieves footprints individually. If an individual footprint also fails,
-it retries with coordinates rounded to nine decimal places in WGS84 and logs
-a warning. If any footprint remains unavailable, the query fails rather than
-assuming incomplete coverage.
+For 1m and OPR project footprints, the USGS index simplifies returned WGS84
+geometry with `maxAllowableOffset=0.0001` degrees. This can affect coverage
+checks near footprint boundaries. If a combined request fails, demetrius
+retries and then retrieves footprints individually. If any footprint remains
+unavailable, the query fails rather than assuming incomplete coverage.
 
 ### Include selected OPR DEM projects
 

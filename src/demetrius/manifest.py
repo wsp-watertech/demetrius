@@ -25,7 +25,8 @@ class Manifest:
         no_snap: bool = False,
         no_clip: bool = False,
         no_overviews: bool = False,
-        no_provenance: bool = False,
+        no_sources: bool = False,
+        sources_only: bool = False,
     ):
         """Create manifest from AOI and tiles.
 
@@ -54,7 +55,10 @@ class Manifest:
         self.no_snap = no_snap
         self.no_clip = no_clip
         self.no_overviews = no_overviews
-        self.no_provenance = no_provenance
+        if no_sources and sources_only:
+            raise ValueError("no_sources and sources_only are mutually exclusive")
+        self.no_sources = no_sources
+        self.sources_only = sources_only
 
     def to_dict(self) -> dict[str, Any]:
         """Convert manifest to dictionary for serialization.
@@ -125,9 +129,10 @@ class Manifest:
                 "no_snap": self.no_snap,
                 "no_clip": self.no_clip,
                 "no_overviews": self.no_overviews,
-                "no_provenance": self.no_provenance,
+                "no_sources": self.no_sources,
+                "sources_only": self.sources_only,
             }
-        if not self.no_provenance and all(tile.priority >= 0 for tile in self.tiles):
+        if not self.no_sources and all(tile.priority >= 0 for tile in self.tiles):
             from .provenance import project_categories
 
             manifest_dict["projects"] = project_categories(self.tiles)
@@ -235,11 +240,14 @@ class Manifest:
             tiles.append(tile)
 
         cellsize = data.get("cellsize")
+        processing = data.get("processing", {}).copy()
+        if "no_provenance" in processing:
+            processing.setdefault("no_sources", processing.pop("no_provenance"))
         return cls(
             aoi=aoi,
             tiles=tiles,
             buffer=data.get("buffer", data.get("buffer_distance", 0)),
             cellsize=cellsize,
             opr_projects=data.get("opr_projects", []),
-            **data.get("processing", {}),
+            **processing,
         )

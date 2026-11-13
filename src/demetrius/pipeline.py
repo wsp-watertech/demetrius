@@ -92,7 +92,7 @@ class PipelineResult:
         Number of unique datasets used.
     error : str | None
         Error message, if the run failed.
-    projects_path : Path | None
+    sources_path : Path | None
         Path to the companion project-priority raster, if produced.
     """
 
@@ -103,7 +103,7 @@ class PipelineResult:
     tile_count: int = 0
     dataset_count: int = 0
     error: str | None = None
-    projects_path: Path | None = None
+    sources_path: Path | None = None
 
 
 def run_pipeline(
@@ -118,7 +118,8 @@ def run_pipeline(
     no_snap: bool = False,
     no_clip: bool = False,
     no_overviews: bool = False,
-    no_provenance: bool = False,
+    no_sources: bool = False,
+    sources_only: bool = False,
     project_bounds: ProjectBoundaries | str | Path | None = None,
     opr_projects: Sequence[int] = (),
     require_full_coverage: bool = False,
@@ -134,7 +135,7 @@ def run_pipeline(
         An already-constructed :class:`~demetrius.models.AOI`, or a path to a
         geometry file to load (buffer is applied when loading from a path).
     output : str | Path
-        Output COG path.
+        Output COG path. Also determines the companion .sources.tif name.
     name : str, default="dem"
         Label used for logging/progress messages and in the returned result.
     output_crs : str | None
@@ -159,8 +160,11 @@ def run_pipeline(
         downsampled reads of the full raster during generation. Useful to
         disable for outputs primarily consumed by tools reading at full
         resolution (e.g. hydrologic models).
-    no_provenance : bool, default=False
+    no_sources : bool, default=False
         Skip the companion project-priority raster.
+    sources_only : bool, default=False
+        Write only the .sources.tif raster, without writing the DEM.
+        Mutually exclusive with no_sources.
     project_bounds : ProjectBoundaries | str | Path | None
         Project boundaries instance or file path. If omitted, fetch 1-meter DEM
         project footprints from the USGS Elevation Index.
@@ -189,6 +193,8 @@ def run_pipeline(
             progress_cb(message)
 
     try:
+        if no_sources and sources_only:
+            raise ValueError("no_sources and sources_only are mutually exclusive")
         _ensure_tmpdir_valid()
 
         from .coverage import validate_coverage
@@ -235,7 +241,9 @@ def run_pipeline(
                 no_snap = manifest.no_snap
                 no_clip = manifest.no_clip
                 no_overviews = manifest.no_overviews
-                no_provenance = manifest.no_provenance
+                if not (no_sources or sources_only):
+                    no_sources = manifest.no_sources
+                    sources_only = manifest.sources_only
                 ffrd = False
 
         # Handle --ffrd behavior
@@ -376,7 +384,8 @@ def run_pipeline(
                 no_snap=no_snap,
                 no_clip=no_clip,
                 no_overviews=no_overviews,
-                no_provenance=no_provenance,
+                no_sources=no_sources,
+                sources_only=sources_only,
             )
             manifest.save(manifest_path)
             _report(f"Saved manifest to {manifest_path}")
@@ -473,15 +482,18 @@ def run_pipeline(
                 _report("Merging and reprojecting (clipping disabled)...")
 
             merger = DatasetMerger(Path(tmpdir))
+            sources_output = output_path.with_name(f"{output_path.stem}.sources.tif")
+            output_path.parent.mkdir(parents=True, exist_ok=True)
             clipped = merger.merge_reproject_clip(
                 downloaded_tiles,
-                Path(tmpdir) / "merged.tif",
+                sources_output if sources_only else Path(tmpdir) / "merged.tif",
                 target_crs=output_crs,
                 dataset_vrts=dataset_vrts,
                 cellsize=effective_cellsize,
                 cutline_geometry=cutline_geometry_wgs84,
                 snap_to_grid=not no_snap,
-                track_projects=not no_provenance,
+                track_projects=not no_sources,
+                sources_only=sources_only,
             )
 
             if not no_clip:
@@ -492,46 +504,53 @@ def run_pipeline(
             # Step 5: Convert elevation units and generate Cloud-Optimized GeoTIFF in one pass
             # Combines elevation conversion (meters → target CRS units) with COG generation
             # to avoid materializing an intermediate raster.
-            _report("Converting elevation units and generating Cloud-Optimized GeoTIFF...")
-
-            elevation_converter = ElevationConverter()
-            output_path.parent.mkdir(parents=True, exist_ok=True)
             dem_source = clipped
-            if not no_provenance:
+            if not no_sources and not sources_only:
                 from .provenance import elevation_band
 
                 dem_source = elevation_band(clipped, Path(tmpdir) / "elevation.vrt")
-            elevation_converter.convert_and_generate_cog(
-                dem_source,
-                output_path,
-                target_crs=output_crs,
-                generate_overviews=not no_overviews,
-            )
-            projects_path = None
-            if not no_provenance:
-                from .provenance import project_categories, write_projects
-
-                _report("Writing project-priority raster...")
-                projects_path = output_path.with_name(f"{output_path.stem}.projects.tif")
-                write_projects(
-                    clipped,
+            if not sources_only:
+                _report("Converting elevation units and generating Cloud-Optimized GeoTIFF...")
+                elevation_converter = ElevationConverter()
+                elevation_converter.convert_and_generate_cog(
+                    dem_source,
                     output_path,
-                    projects_path,
-                    project_categories(prioritized_tiles),
-                    overviews=not no_overviews,
+                    target_crs=output_crs,
+                    generate_overviews=not no_overviews,
                 )
-                _report(f"Project raster saved to: {projects_path}")
+            sources_path = None
+            if not no_sources:
+                from .provenance import finish_projects, project_categories, write_projects
 
-        _report(f"SUCCESS! DEM saved to: {output_path}")
+                sources_path = sources_output
+                categories = project_categories(prioritized_tiles)
+                if sources_only:
+                    _report("Adding source categories, colors, and overviews...")
+                    finish_projects(sources_path, categories, overviews=not no_overviews)
+                else:
+                    _report("Writing source-priority raster...")
+                    write_projects(
+                        clipped,
+                        output_path,
+                        sources_path,
+                        categories,
+                        overviews=not no_overviews,
+                    )
+                _report(f"Source raster saved to: {sources_path}")
+
+        if sources_only:
+            _report(f"SUCCESS! Source raster saved to: {sources_path}")
+        else:
+            _report(f"SUCCESS! DEM saved to: {output_path}")
 
         return PipelineResult(
             name=name,
             status="success",
-            output_path=output_path,
+            output_path=None if sources_only else output_path,
             manifest_path=manifest_path if mode != "process-only" else None,
             tile_count=len(prioritized_tiles),
             dataset_count=dataset_count,
-            projects_path=projects_path,
+            sources_path=sources_path,
         )
 
     except Exception as e:

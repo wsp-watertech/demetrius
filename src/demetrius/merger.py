@@ -58,6 +58,7 @@ class DatasetMerger:
         cutline_geometry: BaseGeometry | None = None,
         snap_to_grid: bool = True,
         track_projects: bool = False,
+        sources_only: bool = False,
     ) -> Path:
         """Merge datasets by priority, reproject, optionally clip and snap to grid in one pass.
 
@@ -91,6 +92,8 @@ class DatasetMerger:
             snapping step. If False, output pixels may not align to the grid.
         track_projects : bool, default=False
             Carry dataset priorities as a second band through the same warp.
+        sources_only : bool, default=False
+            Warp only masked project IDs directly to a compressed integer raster.
 
         Returns
         -------
@@ -114,20 +117,27 @@ class DatasetMerger:
             raise ValueError(f"Cellsize must be positive, got {cellsize}")
 
         track_vertical = False
-        if track_projects:
+        if track_projects and not sources_only:
             import pyproj
 
             target = pyproj.CRS(target_crs)
             track_vertical = target.is_compound or target.is_vertical
 
-        dataset_rasters = self._get_priority_ordered_rasters(
-            tiles, dataset_vrts, track_projects=track_projects, track_vertical=track_vertical
+        dataset_rasters, track_vertical = self._get_priority_ordered_rasters(
+            tiles,
+            dataset_vrts,
+            track_projects=track_projects,
+            track_vertical=track_vertical,
+            sources_only=sources_only,
+            calibrate_projects=resampling == "lanczos",
         )
 
         log_msg = (
             f"Merging {len(dataset_rasters)} dataset(s) and reprojecting to "
             f"{target_crs} (resampling: {resampling})"
         )
+        if sources_only:
+            log_msg = "Warping source IDs only (no elevation output). " + log_msg
         if cutline_geometry is not None:
             log_msg += ", clipping to AOI"
         if snap_to_grid:
@@ -149,6 +159,8 @@ class DatasetMerger:
                 cutline_path=cutline_path,
                 snap_to_grid=snap_to_grid,
                 track_projects=track_projects,
+                sources_only=sources_only,
+                track_vertical=track_vertical,
             )
         finally:
             if cutline_path is not None:
@@ -164,7 +176,9 @@ class DatasetMerger:
         *,
         track_projects: bool = False,
         track_vertical: bool = False,
-    ) -> list[Path]:
+        sources_only: bool = False,
+        calibrate_projects: bool = False,
+    ) -> tuple[list[Path], bool]:
         """Resolve dataset rasters/VRTs in priority order (oldest to newest).
 
         When tiles from a dataset use different projections, creates separate VRTs
@@ -181,8 +195,9 @@ class DatasetMerger:
 
         Returns
         -------
-        list[Path]
-            Dataset rasters/VRTs ordered from lowest to highest priority.
+        tuple[list[Path], bool]
+            Ordered dataset rasters/VRTs and whether vertical transformation
+            must be forced for the paired warp.
 
         Raises
         ------
@@ -252,27 +267,30 @@ class DatasetMerger:
                 dataset_rasters.append(vrt_path)
                 raster_priorities.append(priority)
 
-        if track_projects:
+        if track_projects or sources_only:
             import pyproj
             from osgeo import gdal
 
             from .provenance import add_project_band
 
-            with gdal.ExceptionMgr():
-                for raster in dataset_rasters:
-                    dataset = gdal.Open(str(raster))
-                    crs = pyproj.CRS(dataset.GetProjection())
-                    track_vertical = track_vertical or crs.is_compound or crs.is_vertical
+            if not sources_only:
+                with gdal.ExceptionMgr():
+                    for raster in dataset_rasters:
+                        dataset = gdal.Open(str(raster))
+                        crs = pyproj.CRS(dataset.GetProjection())
+                        track_vertical = track_vertical or crs.is_compound or crs.is_vertical
             dataset_rasters = [
                 add_project_band(
                     raster,
                     self.working_dir / f"tracking_{index}.vrt",
                     priority,
                     track_vertical=track_vertical,
+                    sources_only=sources_only,
+                    calibrate_projects=calibrate_projects,
                 )
                 for index, (raster, priority) in enumerate(zip(dataset_rasters, raster_priorities))
             ]
-        return dataset_rasters
+        return dataset_rasters, track_vertical
 
     def _prepare_dataset(
         self, dataset_id: str, tiles: Sequence[Tile], crs: str | None = None
@@ -361,6 +379,8 @@ class DatasetMerger:
         cutline_path: Path | None,
         snap_to_grid: bool = True,
         track_projects: bool = False,
+        sources_only: bool = False,
+        track_vertical: bool = False,
     ) -> Path:
         """Run a single gdalwarp call that merges (priority overwrite),
         reprojects, optionally clips and snaps to grid.
@@ -417,19 +437,30 @@ class DatasetMerger:
                 "TILED=YES",
                 "-co",
                 "BIGTIFF=YES",  # Support files > 4GB
-                # No compression here: this is an ephemeral intermediate raster,
-                # immediately re-read and discarded by the next pipeline stage.
-                # Compressing it costs CPU time on both write and the subsequent
-                # read with no lasting benefit; only the final COG output is
-                # compressed. Requires adequate scratch disk space.
+                # DEM intermediates are uncompressed; sources-only writes the
+                # final compressed raster directly.
             ]
 
-            if track_projects:
-                from osgeo import gdal
-
-                with gdal.ExceptionMgr():
-                    source = gdal.Open(str(dataset_rasters[0]))
-                    track_vertical = source.RasterCount == 5
+            if sources_only:
+                # Preserve the DEM kernel's validity rules, but never apply
+                # vertical height transformations to constant project IDs.
+                cmd.extend(
+                    [
+                        "-ot",
+                        "Int32",
+                        "-dstnodata",
+                        "-1",
+                        "-novshift",
+                        "-srcalpha",
+                        "-wo",
+                        "UNIFIED_SRC_NODATA=NO",
+                        "-co",
+                        "COMPRESS=DEFLATE",
+                        "-co",
+                        "PREDICTOR=2",
+                    ]
+                )
+            elif track_projects:
                 cmd.extend(
                     [
                         "-ot",

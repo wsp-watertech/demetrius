@@ -115,9 +115,14 @@ def cli():
     help="Enable debug logging",
 )
 @click.option(
-    "--no-provenance",
+    "--no-sources",
     is_flag=True,
-    help="Skip the companion .projects.tif project-priority raster.",
+    help="Skip the companion .sources.tif source-priority raster.",
+)
+@click.option(
+    "--sources-only",
+    is_flag=True,
+    help="Write only <output stem>.sources.tif, without writing the DEM.",
 )
 def process(
     aoi,
@@ -135,7 +140,8 @@ def process(
     data_dir,
     mode,
     debug,
-    no_provenance,
+    no_sources,
+    sources_only,
 ):
     """Process the DEM workflow.
 
@@ -144,6 +150,8 @@ def process(
     """
     from .pipeline import run_pipeline
 
+    if no_sources and sources_only:
+        raise click.UsageError("--no-sources and --sources-only are mutually exclusive")
     # Set logging level if debug is enabled
     if debug:
         logging.getLogger().setLevel(logging.DEBUG)
@@ -159,7 +167,8 @@ def process(
         no_snap=no_snap,
         no_clip=no_clip,
         no_overviews=no_overviews,
-        no_provenance=no_provenance,
+        no_sources=no_sources,
+        sources_only=sources_only,
         project_bounds=project_bounds,
         opr_projects=opr_projects,
         require_full_coverage=require_full_coverage,
@@ -177,9 +186,11 @@ def process(
         return
 
     click.echo("\n" + "=" * 70)
-    click.echo(f"✓ SUCCESS! DEM saved to: {result.output_path}")
-    if result.projects_path is not None:
-        click.echo(f"Project raster: {result.projects_path}")
+    click.echo("✓ SUCCESS!")
+    if result.output_path is not None:
+        click.echo(f"DEM saved to: {result.output_path}")
+    if result.sources_path is not None:
+        click.echo(f"Source raster: {result.sources_path}")
     click.echo("=" * 70)
 
 
@@ -408,7 +419,10 @@ def opr_projects_command(aoi: str) -> None:
     help="Enable debug logging",
 )
 @click.option(
-    "--no-provenance", is_flag=True, help="Skip companion .projects.tif project-priority rasters."
+    "--no-sources", is_flag=True, help="Skip companion .sources.tif source-priority rasters."
+)
+@click.option(
+    "--sources-only", is_flag=True, help="Write only .sources.tif rasters, without writing DEMs."
 )
 def batch(
     input_path,
@@ -428,7 +442,8 @@ def batch(
     mode,
     max_workers,
     debug,
-    no_provenance,
+    no_sources,
+    sources_only,
 ):
     """Batch-process DEMs for every AOI polygon in an input file.
 
@@ -436,6 +451,8 @@ def batch(
     """
     from .batch import batch_process
 
+    if no_sources and sources_only:
+        raise click.UsageError("--no-sources and --sources-only are mutually exclusive")
     # Set logging level if debug is enabled
     if debug:
         logging.getLogger().setLevel(logging.DEBUG)
@@ -452,7 +469,8 @@ def batch(
             no_snap=no_snap,
             no_clip=no_clip,
             no_overviews=no_overviews,
-            no_provenance=no_provenance,
+            no_sources=no_sources,
+            sources_only=sources_only,
             project_bounds=project_bounds,
             opr_projects=opr_projects,
             require_full_coverage=require_full_coverage,
@@ -479,7 +497,7 @@ def batch(
         for r in successful:
             click.echo(
                 f"  {r.name:20s} | Tiles: {r.tile_count:3d} | "
-                f"Datasets: {r.dataset_count:2d} | Output: {r.output_path}"
+                f"Datasets: {r.dataset_count:2d} | Output: {r.output_path or r.sources_path}"
             )
 
     if failed:

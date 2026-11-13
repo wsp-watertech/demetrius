@@ -502,8 +502,8 @@ def test_mixed_pipeline_and_offline_replay_with_different_projection_and_resolut
     result_values = dataset.ReadAsArray()
     assert np.any(np.isclose(result_values, 30.48006096))
     assert np.any(result_values == 10)
-    assert result.projects_path == tmp_path / "dem.projects.tif"
-    projects = gdal.Open(str(result.projects_path))
+    assert result.sources_path == tmp_path / "dem.sources.tif"
+    projects = gdal.Open(str(result.sources_path))
     project_values = projects.ReadAsArray()
     assert np.all(project_values[result_values == 10] == 0)
     assert np.all(project_values[np.isclose(result_values, 30.48006096)] == 1)
@@ -524,8 +524,21 @@ def test_mixed_pipeline_and_offline_replay_with_different_projection_and_resolut
         replay = run_pipeline(aoi, output, mode="process-only")
     assert replay.status == "success", replay.error
     np.testing.assert_array_equal(gdal.Open(str(output)).ReadAsArray(), original)
+    np.testing.assert_array_equal(gdal.Open(str(replay.sources_path)).ReadAsArray(), project_values)
+    original_dem = output.read_bytes()
+    with (
+        patch("src.demetrius.tnm.TNMTileSource", side_effect=AssertionError("network")),
+        patch(
+            "src.demetrius.elevation_converter.ElevationConverter.convert_and_generate_cog",
+            side_effect=AssertionError("sources-only must not generate a DEM"),
+        ),
+    ):
+        sources = run_pipeline(aoi, output, mode="process-only", sources_only=True)
+    assert sources.status == "success", sources.error
+    assert sources.output_path is None
+    assert output.read_bytes() == original_dem
     np.testing.assert_array_equal(
-        gdal.Open(str(replay.projects_path)).ReadAsArray(), project_values
+        gdal.Open(str(sources.sources_path)).ReadAsArray(), project_values
     )
 
 

@@ -18,7 +18,7 @@ Perfect for hydraulic modeling workflows where data integrity and reproducibilit
 
 ### Project provenance
 
-Processing `dem.tif` also produces `dem.projects.tif` by default. Its signed
+Processing `dem.tif` also produces `dem.sources.tif` by default. Its signed
 integer values match dataset priorities in the manifest and `inspect`: **0 is
 a valid project**, and **-1 is nodata** wherever the DEM is nodata. The rasters
 have identical CRS, extent, cell size, and grid alignment, including AOI
@@ -33,15 +33,32 @@ different CRSs in the same dataset share one ID.
 Category names use project/dataset names without CRS suffixes (OPR uses the
 workunit name). A raster attribute table stores names and unique RGBA colors;
 the manifest's `projects` list also records this mapping. Keep
-`dem.projects.tif.aux.xml`, if generated, and `dem.projects.qml` beside the
+`dem.sources.tif.aux.xml`, if generated, and `dem.sources.qml` beside the
 raster when copying it. The QML supplies QGIS's categorized display because
 signed integer GeoTIFFs cannot store a conventional palette. Other viewers
 need raster attribute table support to display names and colors.
 
 Project overviews use nearest-neighbor sampling to avoid inventing categories.
-`--no-overviews` skips both rasters' overviews. Use `--no-provenance` with
-`process` or `batch` to produce only the DEM. Offline `process-only` runs
-restore the saved provenance setting. Tracking requires an additional
+`--no-overviews` skips both rasters' overviews. Use `--no-sources` with
+`process` or `batch` to produce only the DEM. Use `--sources-only` to write
+only the source raster, without writing or overwriting the DEM:
+
+```bash
+demetrius process --aoi site.shp --output dem.tif --sources-only
+# Writes dem.sources.tif, not dem.tif
+```
+
+`--no-sources` and `--sources-only` are mutually exclusive. In batch mode,
+`--sources-only` produces `<AOI name>.sources.tif` for each AOI. Discovery,
+downloads, and the intermediate warp are still required to determine valid
+source pixels; only final DEM conversion and output are skipped. The
+`--output` argument continues to specify the DEM base name, not the source
+raster name.
+
+Offline `process-only` runs restore the saved output selection unless
+`--no-sources` or `--sources-only` explicitly overrides it. This allows source
+rasters to be generated from downloaded tiles and a manifest without an
+existing DEM. Tracking requires additional
 intermediate priority and validity bands and a block-wise output pass; allow
 extra scratch and output disk space for large AOIs.
 Compound-CRS inputs retain their existing vertical transformations; two

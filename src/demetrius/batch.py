@@ -55,7 +55,8 @@ def batch_process(
     no_snap: bool = False,
     no_clip: bool = False,
     no_overviews: bool = False,
-    no_provenance: bool = False,
+    no_sources: bool = False,
+    sources_only: bool = False,
     project_bounds: ProjectBoundaries | str | Path | None = None,
     opr_projects: Sequence[int] = (),
     require_full_coverage: bool = False,
@@ -93,8 +94,10 @@ def batch_process(
         for every AOI rather than clipped to the buffered geometry.
     no_overviews : bool, default=False
         Skip building overview pyramids in the output COGs for every AOI.
-    no_provenance : bool, default=False
+    no_sources : bool, default=False
         Skip companion project-priority rasters for every AOI.
+    sources_only : bool, default=False
+        Write only .sources.tif rasters, without writing DEMs.
     project_bounds : ProjectBoundaries | str | Path | None
         Project boundaries instance or file path (loaded once for all AOIs).
         If omitted, query USGS project footprints for each AOI.
@@ -122,6 +125,8 @@ def batch_process(
     ValueError
         If ``name_field`` is not a column in the input data.
     """
+    if no_sources and sources_only:
+        raise ValueError("no_sources and sources_only are mutually exclusive")
     gdf = _load_geodataframe(source)
 
     if name_field not in gdf.columns:
@@ -157,7 +162,8 @@ def batch_process(
             no_snap=no_snap,
             no_clip=no_clip,
             no_overviews=no_overviews,
-            no_provenance=no_provenance,
+            no_sources=no_sources,
+            sources_only=sources_only,
             project_bounds=project_bounds,
             opr_projects=opr_projects,
             require_full_coverage=require_full_coverage,

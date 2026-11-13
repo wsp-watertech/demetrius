@@ -15,10 +15,11 @@ from osgeo import gdal
 from shapely.geometry import Polygon
 
 from src.demetrius.cli import cli
+from src.demetrius.elevation_converter import ElevationConverter
 from src.demetrius.manifest import Manifest
 from src.demetrius.merger import DatasetMerger
 from src.demetrius.models import AOI, BoundingBox, Tile
-from src.demetrius.pipeline import run_pipeline
+from src.demetrius.pipeline import PipelineResult, run_pipeline
 from src.demetrius.provenance import elevation_band, project_categories, write_projects
 
 
@@ -91,7 +92,7 @@ def test_priorities_follow_valid_elevations_including_explicit_masks(tmp_path, n
     )
     dem = elevation_band(merged, tmp_path / "dem.vrt")
     output = write_projects(
-        merged, dem, tmp_path / "dem.projects.tif", project_categories(tiles), overviews=False
+        merged, dem, tmp_path / "dem.sources.tif", project_categories(tiles), overviews=False
     )
     with gdal.ExceptionMgr():
         elevations = gdal.Open(str(dem)).ReadAsArray()
@@ -154,12 +155,12 @@ def test_tracking_preserves_resampled_dem_and_exact_grid(tmp_path, clip, snap, r
     )
     dem = elevation_band(tracked, tmp_path / "dem.vrt")
     write_projects(
-        tracked, dem, tmp_path / "dem.projects.tif", project_categories(tiles), overviews=False
+        tracked, dem, tmp_path / "dem.sources.tif", project_categories(tiles), overviews=False
     )
     with gdal.ExceptionMgr():
         baseline = gdal.Open(str(plain))
         tracked_dem = gdal.Open(str(dem))
-        projects = gdal.Open(str(tmp_path / "dem.projects.tif"))
+        projects = gdal.Open(str(tmp_path / "dem.sources.tif"))
         valid = baseline.GetRasterBand(1).GetMaskBand().ReadAsArray() != 0
         np.testing.assert_array_equal(
             valid, tracked_dem.GetRasterBand(1).GetMaskBand().ReadAsArray() != 0
@@ -185,30 +186,111 @@ def test_same_dataset_multiple_crss_has_one_category(tmp_path):
         [one, two], tmp_path / "merged.tif", "EPSG:32618", cellsize=1, track_projects=True
     )
     dem = elevation_band(merged, tmp_path / "dem.vrt")
-    output = write_projects(merged, dem, tmp_path / "dem.projects.tif", categories, overviews=False)
+    output = write_projects(merged, dem, tmp_path / "dem.sources.tif", categories, overviews=False)
     elevations = gdal.Open(str(dem))
     valid = elevations.GetRasterBand(1).GetMaskBand().ReadAsArray() != 0
     assert np.all(gdal.Open(str(output)).ReadAsArray()[valid] == 2)
 
 
-@pytest.mark.parametrize("no_provenance", [True, False])
-def test_pipeline_provenance_option_persists_for_offline_replay(tmp_path, no_provenance):
+@pytest.mark.parametrize(
+    "saved_no_sources,saved_sources_only,override",
+    [
+        (True, False, {}),
+        (False, False, {}),
+        (False, True, {}),
+        (True, False, {"sources_only": True}),
+        (False, True, {"no_sources": True}),
+    ],
+)
+def test_pipeline_sources_options_persist_for_offline_replay(
+    tmp_path, saved_no_sources, saved_sources_only, override
+):
     tile = _tile(tmp_path / "tile.tif", "old", 0, np.full((8, 8), 10))
     aoi = AOI(geometry=tile.bounds_wgs84.to_polygon())
     output = tmp_path / "dem.tif"
     Manifest(
-        aoi, [tile], cellsize=1, output_crs="EPSG:32618", no_clip=True, no_provenance=no_provenance
+        aoi,
+        [tile],
+        cellsize=1,
+        output_crs="EPSG:32618",
+        no_clip=True,
+        no_sources=saved_no_sources,
+        sources_only=saved_sources_only,
     ).save(tmp_path / "dem.tif.manifest.json")
-    with patch("src.demetrius.tnm.TNMTileSource", side_effect=AssertionError("network")):
-        result = run_pipeline(aoi, output, mode="process-only")
+    no_sources = override.get("no_sources", False) if override else saved_no_sources
+    sources_only = override.get("sources_only", False) if override else saved_sources_only
+    with (
+        patch("src.demetrius.tnm.TNMTileSource", side_effect=AssertionError("network")),
+        patch(
+            "src.demetrius.elevation_converter.ElevationConverter.convert_and_generate_cog",
+            wraps=ElevationConverter().convert_and_generate_cog,
+        ) as converter,
+    ):
+        result = run_pipeline(aoi, output, mode="process-only", **override)
     assert result.status == "success", result.error
-    if no_provenance:
-        assert result.projects_path is None
-        assert not (tmp_path / "dem.projects.tif").exists()
+    if no_sources:
+        assert result.sources_path is None
+        assert not (tmp_path / "dem.sources.tif").exists()
     else:
-        assert result.projects_path == tmp_path / "dem.projects.tif"
-        assert np.all(gdal.Open(str(result.projects_path)).ReadAsArray() == 0)
-    assert gdal.Open(str(output)).RasterCount == 1
+        assert result.sources_path == tmp_path / "dem.sources.tif"
+        assert np.all(gdal.Open(str(result.sources_path)).ReadAsArray() == 0)
+    if sources_only:
+        converter.assert_not_called()
+        assert result.output_path is None
+        assert not output.exists()
+    else:
+        converter.assert_called_once()
+        assert gdal.Open(str(output)).RasterCount == 1
+
+
+def test_legacy_manifest_no_provenance_setting_is_migrated(tmp_path):
+    aoi = AOI(geometry=BoundingBox(min_x=-75, min_y=40, max_x=-74, max_y=41).to_polygon())
+    data = Manifest(aoi, [], output_crs="EPSG:32618").to_dict()
+    data["processing"].pop("no_sources")
+    data["processing"].pop("sources_only")
+    data["processing"]["no_provenance"] = True
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(data))
+    restored = Manifest.load(path)
+    assert restored.no_sources
+    assert not restored.sources_only
+    assert "no_provenance" not in restored.to_dict()["processing"]
+
+
+@pytest.mark.parametrize("command", ["process", "batch"])
+def test_cli_source_flags_forward_and_conflict(tmp_path, command):
+    input_path = tmp_path / "aoi.geojson"
+    input_path.write_text("{}")
+    result = PipelineResult(name="aoi", status="success", sources_path=tmp_path / "dem.sources.tif")
+    if command == "process":
+        args = ["process", "--aoi", str(input_path), "--output", str(tmp_path / "dem.tif")]
+        target = "src.demetrius.pipeline.run_pipeline"
+        returned = result
+    else:
+        args = ["batch", "--input", str(input_path), "--name-field", "name"]
+        target = "src.demetrius.batch.batch_process"
+        returned = [result]
+    with patch(target, return_value=returned) as runner:
+        invoked = CliRunner().invoke(cli, [*args, "--sources-only"])
+        assert invoked.exit_code == 0, invoked.output
+        assert runner.call_args.kwargs["sources_only"] is True
+        assert runner.call_args.kwargs["no_sources"] is False
+        assert "dem.sources.tif" in invoked.output
+        assert "DEM saved to:" not in invoked.output
+        assert "None" not in invoked.output
+    with patch(target) as runner:
+        invoked = CliRunner().invoke(cli, [*args, "--sources-only", "--no-sources"])
+        assert invoked.exit_code == 2
+        assert "mutually exclusive" in invoked.output
+        runner.assert_not_called()
+
+
+def test_pipeline_rejects_conflicting_sources_flags(tmp_path):
+    result = run_pipeline(
+        tmp_path / "missing.geojson", tmp_path / "dem.tif", no_sources=True, sources_only=True
+    )
+    assert result.status == "failed"
+    assert "mutually exclusive" in result.error
 
 
 def test_categorical_overviews_preserve_only_priorities(tmp_path):
@@ -221,7 +303,7 @@ def test_categorical_overviews_preserve_only_priorities(tmp_path):
     )
     dem = elevation_band(merged, tmp_path / "dem.vrt")
     output = write_projects(
-        merged, dem, tmp_path / "dem.projects.tif", project_categories([old, new]), overviews=True
+        merged, dem, tmp_path / "dem.sources.tif", project_categories([old, new]), overviews=True
     )
     dataset = gdal.Open(str(output))
     band = dataset.GetRasterBand(1)
@@ -263,7 +345,7 @@ def test_invalid_attribution_is_an_explicit_error(tmp_path, invalid):
     dem = elevation_band(merged, tmp_path / "dem.vrt")
     with pytest.raises(ValueError, match="invalid project attribution"):
         write_projects(
-            merged, dem, tmp_path / "dem.projects.tif", project_categories([tile]), overviews=False
+            merged, dem, tmp_path / "dem.sources.tif", project_categories([tile]), overviews=False
         )
 
 
@@ -271,7 +353,8 @@ def test_invalid_attribution_is_an_explicit_error(tmp_path, invalid):
 def test_cli_exposes_provenance_opt_out(command):
     result = CliRunner().invoke(cli, [command, "--help"])
     assert result.exit_code == 0
-    assert "--no-provenance" in result.output
+    assert "--no-sources" in result.output
+    assert "--sources-only" in result.output
 
 
 @pytest.mark.parametrize("crs", ["EPSG:32618+5703", "EPSG:32618+6360"])
@@ -284,7 +367,7 @@ def test_vertical_transforms_do_not_change_priorities_or_elevations(tmp_path, cr
     )
     dem = elevation_band(tracked, tmp_path / "dem.vrt")
     output = write_projects(
-        tracked, dem, tmp_path / "dem.projects.tif", project_categories([tile]), overviews=False
+        tracked, dem, tmp_path / "dem.sources.tif", project_categories([tile]), overviews=False
     )
     np.testing.assert_allclose(
         gdal.Open(str(dem)).ReadAsArray(),

@@ -482,15 +482,18 @@ def run_pipeline(
                 _report("Merging and reprojecting (clipping disabled)...")
 
             merger = DatasetMerger(Path(tmpdir))
+            sources_output = output_path.with_name(f"{output_path.stem}.sources.tif")
+            output_path.parent.mkdir(parents=True, exist_ok=True)
             clipped = merger.merge_reproject_clip(
                 downloaded_tiles,
-                Path(tmpdir) / "merged.tif",
+                sources_output if sources_only else Path(tmpdir) / "merged.tif",
                 target_crs=output_crs,
                 dataset_vrts=dataset_vrts,
                 cellsize=effective_cellsize,
                 cutline_geometry=cutline_geometry_wgs84,
                 snap_to_grid=not no_snap,
                 track_projects=not no_sources,
+                sources_only=sources_only,
             )
 
             if not no_clip:
@@ -501,9 +504,8 @@ def run_pipeline(
             # Step 5: Convert elevation units and generate Cloud-Optimized GeoTIFF in one pass
             # Combines elevation conversion (meters → target CRS units) with COG generation
             # to avoid materializing an intermediate raster.
-            output_path.parent.mkdir(parents=True, exist_ok=True)
             dem_source = clipped
-            if not no_sources:
+            if not no_sources and not sources_only:
                 from .provenance import elevation_band
 
                 dem_source = elevation_band(clipped, Path(tmpdir) / "elevation.vrt")
@@ -518,17 +520,22 @@ def run_pipeline(
                 )
             sources_path = None
             if not no_sources:
-                from .provenance import project_categories, write_projects
+                from .provenance import finish_projects, project_categories, write_projects
 
-                _report("Writing source-priority raster...")
-                sources_path = output_path.with_name(f"{output_path.stem}.sources.tif")
-                write_projects(
-                    clipped,
-                    dem_source if sources_only else output_path,
-                    sources_path,
-                    project_categories(prioritized_tiles),
-                    overviews=not no_overviews,
-                )
+                sources_path = sources_output
+                categories = project_categories(prioritized_tiles)
+                if sources_only:
+                    _report("Adding source categories, colors, and overviews...")
+                    finish_projects(sources_path, categories, overviews=not no_overviews)
+                else:
+                    _report("Writing source-priority raster...")
+                    write_projects(
+                        clipped,
+                        output_path,
+                        sources_path,
+                        categories,
+                        overviews=not no_overviews,
+                    )
                 _report(f"Source raster saved to: {sources_path}")
 
         if sources_only:

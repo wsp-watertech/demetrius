@@ -20,6 +20,7 @@ from src.demetrius.manifest import Manifest
 from src.demetrius.merger import DatasetMerger
 from src.demetrius.models import AOI, BoundingBox, Tile
 from src.demetrius.pipeline import PipelineResult, run_pipeline
+from src.demetrius.projections import get_projection_file
 from src.demetrius.provenance import elevation_band, project_categories, write_projects
 
 
@@ -61,8 +62,28 @@ def _tile(
     )
 
 
-@pytest.mark.parametrize("nodata", [-9999, 0, float("nan"), None])
-def test_priorities_follow_valid_elevations_including_explicit_masks(tmp_path, nodata):
+def _assert_ids_only_matches(merger, tiles, expected, output, **options):
+    actual = merger.merge_reproject_clip(
+        tiles, output, sources_only=True, **{"target_crs": "EPSG:32618", "cellsize": 1, **options}
+    )
+    with gdal.ExceptionMgr():
+        reference = gdal.Open(str(expected))
+        dataset = gdal.Open(str(actual))
+        assert dataset.RasterCount == 1
+        assert dataset.GetRasterBand(1).DataType == gdal.GDT_Int32
+        assert dataset.GetRasterBand(1).GetNoDataValue() == -1
+        assert dataset.GetGeoTransform() == reference.GetGeoTransform()
+        assert dataset.GetProjection() == reference.GetProjection()
+        np.testing.assert_array_equal(dataset.ReadAsArray(), reference.ReadAsArray())
+
+
+@pytest.mark.parametrize(
+    "nodata,explicit_mask",
+    [(-9999, False), (0, False), (float("nan"), False), (None, True), (-9999, True), (0, True)],
+)
+def test_priorities_follow_valid_elevations_including_explicit_masks(
+    tmp_path, nodata, explicit_mask
+):
     old_values = np.full((12, 12), 10)
     old_values[5, 5] = -1
     old_values[0:2, 0:2] = -9999
@@ -74,6 +95,7 @@ def test_priorities_follow_valid_elevations_including_explicit_masks(tmp_path, n
         new_values[4:8, 4:8] = nodata
         new_values[:2, :2] = nodata
     explicit[:2, :2] = False
+    explicit[8:10, 8:10] = False
     tiles = [
         _tile(tmp_path / "old.tif", "old", 0, old_values),
         _tile(
@@ -82,7 +104,7 @@ def test_priorities_follow_valid_elevations_including_explicit_masks(tmp_path, n
             3,
             new_values,
             nodata=nodata,
-            mask=explicit if nodata is None else None,
+            mask=explicit if explicit_mask else None,
         ),
     ]
     merger = DatasetMerger(tmp_path)
@@ -101,9 +123,11 @@ def test_priorities_follow_valid_elevations_including_explicit_masks(tmp_path, n
         baseline = gdal.Open(str(plain))
         baseline_valid = baseline.GetRasterBand(1).GetMaskBand().ReadAsArray() != 0
         np.testing.assert_array_equal(baseline_valid, np.isfinite(elevations))
-        np.testing.assert_array_equal(
-            baseline.ReadAsArray()[baseline_valid], elevations[baseline_valid]
-        )
+        # The untracked GDAL path can ignore explicit masks when nodata is set.
+        if not (explicit_mask and nodata is not None):
+            np.testing.assert_array_equal(
+                baseline.ReadAsArray()[baseline_valid], elevations[baseline_valid]
+            )
         assert np.all(values[elevations == 10] == 0)
         assert np.all(values[elevations == -1] == 0)
         assert np.all(values[elevations == 20] == 3)
@@ -118,6 +142,7 @@ def test_priorities_follow_valid_elevations_including_explicit_masks(tmp_path, n
     style = ET.parse(output.with_suffix(".qml"))
     assert [node.get("value") for node in style.findall(".//paletteEntry")] == ["0", "3"]
     assert len({node.get("color") for node in style.findall(".//paletteEntry")}) == 2
+    _assert_ids_only_matches(merger, tiles, output, tmp_path / "ids-only.tif")
 
 
 @pytest.mark.parametrize("clip,snap", [(False, True), (True, True), (True, False)])
@@ -175,6 +200,9 @@ def test_tracking_preserves_resampled_dem_and_exact_grid(tmp_path, clip, snap, r
             projects.RasterYSize,
         )
         assert np.all(projects.ReadAsArray()[~valid] == -1)
+    _assert_ids_only_matches(
+        merger, tiles, tmp_path / "dem.sources.tif", tmp_path / "ids-only.tif", **options
+    )
 
 
 def test_same_dataset_multiple_crss_has_one_category(tmp_path):
@@ -190,6 +218,46 @@ def test_same_dataset_multiple_crss_has_one_category(tmp_path):
     elevations = gdal.Open(str(dem))
     valid = elevations.GetRasterBand(1).GetMaskBand().ReadAsArray() != 0
     assert np.all(gdal.Open(str(output)).ReadAsArray()[valid] == 2)
+    _assert_ids_only_matches(DatasetMerger(tmp_path), [one, two], output, tmp_path / "ids-only.tif")
+
+
+@pytest.mark.parametrize("resampling", ["bilinear", "cubic", "cubicspline", "lanczos"])
+@pytest.mark.parametrize(
+    "target,cellsize,snap", [("EPSG:5070", 0.75, False), ("ffrd", 4, True), ("ffrd", 8, False)]
+)
+def test_ids_only_matches_reprojected_mixed_resolution_masks(
+    tmp_path, resampling, target, cellsize, snap
+):
+    rng = np.random.default_rng(42)
+    old = np.where(rng.random((64, 64)) < 0.2, -9999, 10)
+    new = np.where(rng.random((32, 32)) < 0.4, -9999, 20)
+    tiles = [
+        _tile(tmp_path / "old.tif", "old", 0, old),
+        _tile(
+            tmp_path / "new.tif",
+            "new",
+            17,
+            new,
+            crs="EPSG:26918",
+            transform=(500003.3, 1.5, 0, 4499998.7, 0, -1.5),
+        ),
+    ]
+    target_crs = get_projection_file("ffrd.prj").read_text() if target == "ffrd" else target
+    options = {
+        "target_crs": target_crs,
+        "cellsize": cellsize,
+        "snap_to_grid": snap,
+        "resampling": resampling,
+    }
+    merger = DatasetMerger(tmp_path)
+    tracked = merger.merge_reproject_clip(
+        tiles, tmp_path / "tracked.tif", track_projects=True, **options
+    )
+    dem = elevation_band(tracked, tmp_path / "dem.vrt")
+    paired = write_projects(
+        tracked, dem, tmp_path / "paired.sources.tif", project_categories(tiles), overviews=False
+    )
+    _assert_ids_only_matches(merger, tiles, paired, tmp_path / "ids-only.tif", **options)
 
 
 @pytest.mark.parametrize(
@@ -225,6 +293,7 @@ def test_pipeline_sources_options_persist_for_offline_replay(
             "src.demetrius.elevation_converter.ElevationConverter.convert_and_generate_cog",
             wraps=ElevationConverter().convert_and_generate_cog,
         ) as converter,
+        patch("subprocess.run", wraps=subprocess.run) as commands,
     ):
         result = run_pipeline(aoi, output, mode="process-only", **override)
     assert result.status == "success", result.error
@@ -238,6 +307,13 @@ def test_pipeline_sources_options_persist_for_offline_replay(
         converter.assert_not_called()
         assert result.output_path is None
         assert not output.exists()
+        warps = [call.args[0] for call in commands.call_args_list if call.args[0][0] == "gdalwarp"]
+        assert len(warps) == 1
+        assert warps[0][-1] == str(result.sources_path)
+        assert "-novshift" in warps[0]
+        assert not any(
+            "merged.tif" in arg for cmd in commands.call_args_list for arg in cmd.args[0]
+        )
     else:
         converter.assert_called_once()
         assert gdal.Open(str(output)).RasterCount == 1
@@ -376,3 +452,4 @@ def test_vertical_transforms_do_not_change_priorities_or_elevations(tmp_path, cr
         rtol=0,
     )
     assert np.all(gdal.Open(str(output)).ReadAsArray() == 3)
+    _assert_ids_only_matches(merger, [tile], output, tmp_path / "ids-only.tif")

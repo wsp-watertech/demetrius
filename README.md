@@ -24,11 +24,11 @@ a valid project**, and **-1 is nodata** wherever the DEM is nodata. The rasters
 have identical CRS, extent, cell size, and grid alignment, including AOI
 buffering and clipping.
 
-Project IDs travel through the same merge and resampling operation as the
-elevations, so newer valid data replaces older data and holes retain the older
-project ID. IDs identify the winning dataset, not individual tiles or every
-source cell contributing to interpolation within that dataset. Tiles from
-different CRSs in the same dataset share one ID.
+With DEM output enabled, project IDs travel through the same merge and
+resampling operation as the elevations, so newer valid data replaces older
+data and holes retain the older project ID. IDs identify the winning dataset,
+not individual tiles or every source cell contributing to interpolation within
+that dataset. Tiles from different CRSs in the same dataset share one ID.
 
 Category names use project/dataset names without CRS suffixes (OPR uses the
 workunit name). A raster attribute table stores names and unique RGBA colors;
@@ -50,15 +50,18 @@ demetrius process --aoi site.shp --output dem.tif --sources-only
 
 `--no-sources` and `--sources-only` are mutually exclusive. In batch mode,
 `--sources-only` produces `<AOI name>.sources.tif` for each AOI. Discovery,
-downloads, and the intermediate warp are still required to determine valid
-source pixels; only final DEM conversion and output are skipped. The
-`--output` argument continues to specify the DEM base name, not the source
-raster name.
+downloads, and source-mask reads are still required to determine valid source
+pixels. A dedicated IDs-only warp writes the compressed integer raster
+directly: it does not create `merged.tif`, interpolate elevations, or perform
+vertical elevation conversions. It retains the DEM's resampling kernel for
+validity at holes and edges rather than substituting nearest-neighbor
+coverage. IDs are constant within each input dataset. The `--output` argument
+continues to specify the DEM base name, not the source raster name.
 
 Offline `process-only` runs restore the saved output selection unless
 `--no-sources` or `--sources-only` explicitly overrides it. This allows source
 rasters to be generated from downloaded tiles and a manifest without an
-existing DEM. Tracking requires additional
+existing DEM. With DEM output enabled, tracking requires additional
 intermediate priority and validity bands and a block-wise output pass; allow
 extra scratch and output disk space for large AOIs.
 Compound-CRS inputs retain their existing vertical transformations; two

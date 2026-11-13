@@ -47,9 +47,14 @@ def project_categories(tiles: list[Tile]) -> list[ProjectCategory]:
 
 
 def add_project_band(
-    source: Path, output: Path, priority: int, *, track_vertical: bool = False
+    source: Path,
+    output: Path,
+    priority: int,
+    *,
+    track_vertical: bool = False,
+    sources_only: bool = False,
 ) -> Path:
-    """Add a constant-ID band with the elevation band's exact validity mask."""
+    """Build a masked priority source, optionally retaining elevations."""
     with gdal.ExceptionMgr():
         dataset = gdal.Open(str(source))
         if dataset.RasterCount != 1:
@@ -60,8 +65,10 @@ def add_project_band(
         tree = ET.parse(output)
         root = tree.getroot()
         width, height = dataset.RasterXSize, dataset.RasterYSize
-        constants = [priority, 0, 1] if track_vertical else [priority]
-        for number, constant in enumerate(constants, start=2):
+        if sources_only:
+            root.remove(root.find("VRTRasterBand"))
+        constants = [priority, 0, 1] if track_vertical and not sources_only else [priority]
+        for number, constant in enumerate(constants, start=1 if sources_only else 2):
             band = ET.SubElement(
                 root,
                 "VRTRasterBand",
@@ -75,17 +82,25 @@ def add_project_band(
             for rect in ("SrcRect", "DstRect"):
                 ET.SubElement(node, rect, xOff="0", yOff="0", xSize=str(width), ySize=str(height))
             ET.SubElement(node, "UseMaskBand").text = "true"
+            nodata = dataset.GetRasterBand(1).GetNoDataValue()
+            if nodata is not None:
+                ET.SubElement(node, "NODATA").text = str(nodata)
             ET.SubElement(node, "ScaleRatio").text = "0"
             ET.SubElement(node, "ScaleOffset").text = str(constant)
-        # A shared alpha band makes the warp use identical validity for both
-        # bands, including explicit masks as well as intrinsic nodata.
+        # A shared alpha preserves explicit masks alongside intrinsic nodata.
         for target in [root, *root.findall("VRTRasterBand")]:
             for old_mask in target.findall("MaskBand"):
                 target.remove(old_mask)
         mask_band = ET.SubElement(
-            root, "VRTRasterBand", dataType="Byte", band=str(len(constants) + 2)
+            root,
+            "VRTRasterBand",
+            dataType="Byte",
+            band=str(len(constants) + (1 if sources_only else 2)),
         )
-        ET.SubElement(mask_band, "ColorInterp").text = "Alpha"
+        # ID-only warps consume this via -srcalpha. Omitting ColorInterp
+        # prevents GDAL from also automatically adding a destination alpha.
+        if not sources_only:
+            ET.SubElement(mask_band, "ColorInterp").text = "Alpha"
         mask_source = ET.SubElement(mask_band, "SimpleSource")
         ET.SubElement(mask_source, "SourceFilename", relativeToVRT="0").text = str(source.resolve())
         ET.SubElement(mask_source, "SourceBand").text = "mask,1"
@@ -165,6 +180,29 @@ def write_projects(
                 integers = np.full(values.shape, -1, dtype=np.int32)
                 integers[valid] = np.rint(chosen).astype(np.int32)
                 band.WriteArray(integers, x, y)
+        band = None
+        result.Close()
+    return finish_projects(output, categories, overviews=overviews)
+
+
+def finish_projects(
+    output: Path,
+    categories: list[ProjectCategory],
+    *,
+    overviews: bool,
+) -> Path:
+    """Attach the same categorical metadata to paired and IDs-only outputs."""
+    with gdal.ExceptionMgr():
+        result = gdal.Open(str(output), gdal.GA_Update)
+        band = result.GetRasterBand(1)
+        if (
+            result.RasterCount != 1
+            or band.DataType != gdal.GDT_Int32
+            or band.GetNoDataValue() != -1
+        ):
+            raise ValueError("Source raster must be single-band Int32 with nodata -1")
+        band.SetDescription("Project priority")
+        ids = {category["value"] for category in categories}
         rat = gdal.RasterAttributeTable()
         rat.SetTableType(gdal.GRTT_THEMATIC)
         for name, kind, usage in [
@@ -188,7 +226,7 @@ def write_projects(
         if overviews:
             levels = []
             level = 2
-            while max(final.RasterXSize, final.RasterYSize) // level >= 256:
+            while max(result.RasterXSize, result.RasterYSize) // level >= 256:
                 levels.append(level)
                 level *= 2
             if levels:

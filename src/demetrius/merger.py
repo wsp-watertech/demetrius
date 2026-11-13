@@ -123,12 +123,13 @@ class DatasetMerger:
             target = pyproj.CRS(target_crs)
             track_vertical = target.is_compound or target.is_vertical
 
-        dataset_rasters = self._get_priority_ordered_rasters(
+        dataset_rasters, track_vertical = self._get_priority_ordered_rasters(
             tiles,
             dataset_vrts,
             track_projects=track_projects,
             track_vertical=track_vertical,
             sources_only=sources_only,
+            calibrate_projects=resampling == "lanczos",
         )
 
         log_msg = (
@@ -159,6 +160,7 @@ class DatasetMerger:
                 snap_to_grid=snap_to_grid,
                 track_projects=track_projects,
                 sources_only=sources_only,
+                track_vertical=track_vertical,
             )
         finally:
             if cutline_path is not None:
@@ -175,7 +177,8 @@ class DatasetMerger:
         track_projects: bool = False,
         track_vertical: bool = False,
         sources_only: bool = False,
-    ) -> list[Path]:
+        calibrate_projects: bool = False,
+    ) -> tuple[list[Path], bool]:
         """Resolve dataset rasters/VRTs in priority order (oldest to newest).
 
         When tiles from a dataset use different projections, creates separate VRTs
@@ -192,8 +195,9 @@ class DatasetMerger:
 
         Returns
         -------
-        list[Path]
-            Dataset rasters/VRTs ordered from lowest to highest priority.
+        tuple[list[Path], bool]
+            Ordered dataset rasters/VRTs and whether vertical transformation
+            must be forced for the paired warp.
 
         Raises
         ------
@@ -282,10 +286,11 @@ class DatasetMerger:
                     priority,
                     track_vertical=track_vertical,
                     sources_only=sources_only,
+                    calibrate_projects=calibrate_projects,
                 )
                 for index, (raster, priority) in enumerate(zip(dataset_rasters, raster_priorities))
             ]
-        return dataset_rasters
+        return dataset_rasters, track_vertical
 
     def _prepare_dataset(
         self, dataset_id: str, tiles: Sequence[Tile], crs: str | None = None
@@ -375,6 +380,7 @@ class DatasetMerger:
         snap_to_grid: bool = True,
         track_projects: bool = False,
         sources_only: bool = False,
+        track_vertical: bool = False,
     ) -> Path:
         """Run a single gdalwarp call that merges (priority overwrite),
         reprojects, optionally clips and snaps to grid.
@@ -455,11 +461,6 @@ class DatasetMerger:
                     ]
                 )
             elif track_projects:
-                from osgeo import gdal
-
-                with gdal.ExceptionMgr():
-                    source = gdal.Open(str(dataset_rasters[0]))
-                    track_vertical = source.RasterCount == 5
                 cmd.extend(
                     [
                         "-ot",

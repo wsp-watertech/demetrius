@@ -260,6 +260,43 @@ def test_ids_only_matches_reprojected_mixed_resolution_masks(
     _assert_ids_only_matches(merger, tiles, paired, tmp_path / "ids-only.tif", **options)
 
 
+def test_lanczos_normalizes_constant_ids_without_changing_elevations(tmp_path, monkeypatch):
+    tile = _tile(tmp_path / "tile.tif", "project", 17, np.full((8, 8), 20))
+    original_warp = DatasetMerger._run_combined_gdalwarp
+
+    def warp_with_near_unity_weights(self, *args, **kwargs):
+        output = original_warp(self, *args, **kwargs)
+        # GDAL 3.8 skips Lanczos normalization for weight sums within 1e-5
+        # of unity. Reproduce this independently of local GDAL/PROJ versions.
+        with gdal.ExceptionMgr():
+            dataset = gdal.Open(str(output), gdal.GA_Update)
+            for number in range(1, dataset.RasterCount + 1):
+                band = dataset.GetRasterBand(number)
+                if band.GetColorInterpretation() != gdal.GCI_AlphaBand:
+                    band.WriteArray(band.ReadAsArray() * 0.9999928)
+            band = None
+            dataset.Close()
+        return output
+
+    monkeypatch.setattr(DatasetMerger, "_run_combined_gdalwarp", warp_with_near_unity_weights)
+    tracked = DatasetMerger(tmp_path).merge_reproject_clip(
+        [tile],
+        tmp_path / "tracked.tif",
+        "EPSG:32618",
+        cellsize=1,
+        resampling="lanczos",
+        track_projects=True,
+    )
+    dem = elevation_band(tracked, tmp_path / "dem.vrt")
+    before = gdal.Open(str(dem)).ReadAsArray().copy()
+    output = write_projects(
+        tracked, dem, tmp_path / "dem.sources.tif", project_categories([tile]), overviews=False
+    )
+    assert np.all(gdal.Open(str(output)).ReadAsArray() == 17)
+    np.testing.assert_array_equal(gdal.Open(str(dem)).ReadAsArray(), before)
+    np.testing.assert_allclose(before, 20 * 0.9999928, rtol=1e-7)
+
+
 @pytest.mark.parametrize(
     "saved_no_sources,saved_sources_only,override",
     [

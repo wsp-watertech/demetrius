@@ -53,6 +53,7 @@ def add_project_band(
     *,
     track_vertical: bool = False,
     sources_only: bool = False,
+    calibrate_projects: bool = False,
 ) -> Path:
     """Build a masked priority source, optionally retaining elevations."""
     with gdal.ExceptionMgr():
@@ -67,7 +68,11 @@ def add_project_band(
         width, height = dataset.RasterXSize, dataset.RasterYSize
         if sources_only:
             root.remove(root.find("VRTRasterBand"))
-        constants = [priority, 0, 1] if track_vertical and not sources_only else [priority]
+        constants = (
+            [priority, 0, 1]
+            if (track_vertical or calibrate_projects) and not sources_only
+            else [priority]
+        )
         for number, constant in enumerate(constants, start=1 if sources_only else 2):
             band = ET.SubElement(
                 root,
@@ -161,9 +166,8 @@ def write_projects(
                 valid = final.GetRasterBand(1).GetMaskBand().ReadAsArray(x, y, width, height) != 0
                 values = source.GetRasterBand(2).ReadAsArray(x, y, width, height)
                 if source.RasterCount in (4, 5):
-                    # Vertical warps apply z -> scale*z + offset to every band.
-                    # Warped constants 0 and 1 recover that transform without
-                    # a second warp or changing the elevation operation.
+                    # Constants 0 and 1 recover both vertical scale/offset and
+                    # older Lanczos kernels' near-unity weight normalization.
                     zero = source.GetRasterBand(3).ReadAsArray(x, y, width, height)
                     one = source.GetRasterBand(4).ReadAsArray(x, y, width, height)
                     scale = one[valid] - zero[valid]

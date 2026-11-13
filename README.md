@@ -66,7 +66,10 @@ intermediate priority and validity bands and a block-wise output pass; allow
 extra scratch and output disk space for large AOIs.
 Compound-CRS inputs retain their existing vertical transformations; two
 additional calibration bands keep those transformations from altering project
-IDs. This case uses higher-precision intermediate storage.
+IDs. This case uses higher-precision intermediate storage. Paired Lanczos
+warps also use calibration bands to preserve integer IDs on GDAL versions
+that skip normalization for interpolation weights near unity; elevation
+values are left unchanged.
 
 For overlapping datasets, the newer **LiDAR acquisition period** (ScienceBase
 flight Start/End dates) takes precedence over an older one. Datasets without
